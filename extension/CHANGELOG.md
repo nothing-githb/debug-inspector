@@ -2,6 +2,16 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.60.3] - 2026-06-15
+
+### Fixed
+- **A `groupBy` + `mode: "tree"` section now draws a tree per group.** When a section
+  combined grouping with tree mode, the graph rendered each group as a flat grid, so the
+  hierarchy was lost — the root and its children appeared side by side instead of stacked.
+  Each group is now laid out as its own hierarchy (root on top, children below, with the
+  group header as the super-root and proper tree edges). The graph layout `kind` is now
+  carried through for grouped sections so the tree layout can apply.
+
 ## [0.60.2] - 2026-06-12
 
 ### Docs

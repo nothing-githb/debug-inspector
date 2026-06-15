@@ -889,7 +889,9 @@ async function buildGrouped(
   }
   const total = groups.reduce((a, g) => a + g.rows.length, 0);
   log?.debug(`grouped "${name}" by ${scfg.groupBy}: ${groups.length} group(s), ${total} row(s)`);
-  return { name, columnsAll: eff.order, hidden: eff.hidden, rows: [], summary: `${total} ${name} · ${groups.length} ${scfg.groupBy}`, grouped: true, groups, bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields), links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields) };
+  // grouped bölüm için de kind: groupBy + mode:tree -> graph view her grubu kendi ağacı olarak çizebilsin
+  const gkind: 'linked' | 'array' | 'index' | 'tree' = scfg.mode === 'array' ? 'array' : scfg.mode === 'index_list' ? 'index' : scfg.mode === 'tree' ? 'tree' : 'linked';
+  return { name, columnsAll: eff.order, hidden: eff.hidden, rows: [], summary: `${total} ${name} · ${groups.length} ${scfg.groupBy}`, grouped: true, groups, kind: gkind, bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields), links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields) };
 }
 
 // ---------------------------------------------------------------------------
@@ -2030,11 +2032,26 @@ function getHtml(): string {
       CARDW = Math.max(150, Math.min(360, Math.round(_cw) + 28));
     }
     if (sec.grouped) {
-      // her grup bir BLOK (üstte etiket, altında üyeler mini-ızgarada); bloklar ~kare bir IZGARAYA paketlenir
-      // (tek sırada yan yana değil) -> çok grupta dengeli/kompakt görünüm. ncols ≈ sqrt(grup sayısı).
-      var GAPX = 44, GAPY = 34;
+      // her grup bir BLOK (üstte etiket, altında üyeler); bloklar ~kare bir IZGARAYA paketlenir.
+      // groupBy + mode:tree ise her grup KENDİ ağacı olarak çizilir (kök üstte, çocuklar altta, 'tree' kenarları);
+      // aksi halde üyeler mini-ızgarada. ncols ≈ sqrt(grup sayısı).
+      var GAPX = 44, GAPY = 34, GROWH = CARDH + GVGY + 22;
+      var isTreeG = sec.kind === 'tree';
       var blocks = (sec.groups || []).map(function (g, gi) {
         var rws = g.rows || [];
+        if (isTreeG) {
+          // grup-içi düzgün (tidy) ağaç yerleşimi: __parent__ (grup-içi flat index) -> derinlik=y, alt-ağaç ortası=x
+          var par = rws.map(function (r) { var p = r['__parent__']; return (p == null || p === '') ? -1 : (+p); });
+          var ch = {}; par.forEach(function (p, i) { if (p >= 0) (ch[p] || (ch[p] = [])).push(i); });
+          var depth = rws.map(function (r, i) { var d = 0, p = par[i], gg = 0; while (p >= 0 && gg++ < rws.length) { d++; p = par[p]; } return d; });
+          var TCOLW = CARDW + GVGX, xpos = [], leafN = 0;
+          var place = function (i) { var c = ch[i] || []; if (!c.length) { xpos[i] = leafN * TCOLW; leafN++; } else { c.forEach(place); xpos[i] = (xpos[c[0]] + xpos[c[c.length - 1]]) / 2; } };
+          rws.forEach(function (r, i) { if (par[i] < 0) place(i); });
+          rws.forEach(function (r, i) { if (xpos[i] == null) place(i); });   // yetim/döngü düğümleri de konumlansın
+          var treeW = rws.length ? (Math.max.apply(null, xpos.map(function (v) { return v || 0; })) + CARDW) : CARDW;
+          var maxD = rws.length ? Math.max.apply(null, depth) : 0;
+          return { g: g, gi: gi, rws: rws, tree: { par: par, depth: depth, xpos: xpos }, bw: Math.max(GVGROUPW, treeW), bh: GVGROUPH + GVGY + maxD * GROWH + CARDH };
+        }
         var gper = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(rws.length || 1))));
         var laneRows = Math.max(1, Math.ceil(rws.length / gper));
         return { g: g, gi: gi, rws: rws, gper: gper, bw: gper * (CARDW + GVGX) - GVGX, bh: GVGROUPH + GVGY + laneRows * (CARDH + GVGY) };
@@ -2051,10 +2068,19 @@ function getHtml(): string {
         var memTop = by + GVGROUPH + GVGY;
         b.rws.forEach(function (r, ri) {
           if (nodes.length >= GRAPH_MAX) { capped = true; return; }
-          var cc = ri % b.gper, rr = Math.floor(ri / b.gper), mid = 'm' + b.gi + '_' + ri;
-          nodes.push({ id: mid, row: r, pkey: 'm:' + gkey + ':' + posKeyOf(r, cols, String(ri)), x: bx + cc * (CARDW + GVGX), y: memTop + rr * (CARDH + GVGY), w: CARDW, h: CARDH, cols: cols });
-          gnode.members.push(mid);   // grup başlığı sürüklenince blok bütün taşınsın (#2)
-          edges.push({ from: 'g' + b.gi, to: mid, type: 'grouped' });
+          var mid = 'm' + b.gi + '_' + ri;
+          if (b.tree) {
+            // ağaç: x = alt-ağaç ortası, y = derinlik; kenarlar ebeveyn->çocuk (kök ise grup başlığı->kök) = 'tree' (dikey)
+            nodes.push({ id: mid, row: r, pkey: 'm:' + gkey + ':' + posKeyOf(r, cols, String(ri)), x: bx + (b.tree.xpos[ri] || 0), y: memTop + b.tree.depth[ri] * GROWH, w: CARDW, h: CARDH, cols: cols });
+            gnode.members.push(mid);
+            var pp = b.tree.par[ri];
+            edges.push(pp >= 0 ? { from: 'm' + b.gi + '_' + pp, to: mid, type: 'tree' } : { from: 'g' + b.gi, to: mid, type: 'tree' });
+          } else {
+            var cc = ri % b.gper, rr = Math.floor(ri / b.gper);
+            nodes.push({ id: mid, row: r, pkey: 'm:' + gkey + ':' + posKeyOf(r, cols, String(ri)), x: bx + cc * (CARDW + GVGX), y: memTop + rr * (CARDH + GVGY), w: CARDW, h: CARDH, cols: cols });
+            gnode.members.push(mid);   // grup başlığı sürüklenince blok bütün taşınsın (#2)
+            edges.push({ from: 'g' + b.gi, to: mid, type: 'grouped' });
+          }
         });
         curX += b.bw + GAPX; rowMaxH = Math.max(rowMaxH, b.bh); col++;
       });
