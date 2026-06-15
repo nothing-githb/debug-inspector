@@ -202,6 +202,26 @@ instead of rewriting it, use **`${wrapped_expr}`** (the post-`cast`/`wrap`
 element): with `wrap: "((node_t *)${expr})"`, write `"next": "${wrapped_expr}->nxt"`.
 (The demo's `procSlots` uses `"next": "${expr}.next"`.)
 
+### Mode 4 — `tree`
+
+Walk a tree from `root`, following each node's **child pointers**. `children` lists the child-pointer field names (default `["left","right"]`); NULL children end a branch. The graph view draws the result as a **hierarchical tree** — root on top, children below, edges leaving each parent's bottom-centre and entering each child's top-centre — while the table view lists the nodes. (Below: a binary search tree reached through `left`/`right`.)
+
+```json
+{
+  "btree": {
+    "mode": "tree",
+    "root": "g_tree_root",
+    "children": ["left", "right"],
+    "fields": [
+      { "label": "Key",   "expr": "key" },
+      { "label": "Label", "expr": "label" }
+    ]
+  }
+}
+```
+
+`children` is not limited to two — list as many child-pointer fields as your node has (e.g. `["first_child","next_sibling"]` for an n-ary tree, or `["lo","mid","hi"]`). Each named field is followed from every node; a cycle/again-visited guard keeps the walk finite, and unreadable or NULL children simply stop that branch.
+
 ### Grouping / tree (`groupBy` + `${master}`)
 
 Set `groupBy` to a master section's name to render this section in its own tab as a **collapsible tree** showing **all** master elements at once. `${master}` is replaced with each master's processed element. Node titles come from the master's `label` (here, `processes` sets `"label": "name"`). A **Flat view** toggle switches between the tree and one ungrouped table.

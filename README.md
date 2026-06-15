@@ -326,6 +326,29 @@ If the next index isn't a plain field, `next` may be a **`${expr}` template**
 Without either placeholder, `next` stays the simple `element<access>next` (using
 the wrapped element).
 
+**`tree`** — walk a tree from `root`, following each node's **child pointers**.
+`children` lists the child-pointer field names (default `["left","right"]`); a
+NULL child ends that branch. The graph view draws it as a **hierarchical tree**
+(root on top, children below, edges from each parent's bottom into each child's
+top); the table view lists the nodes.
+
+```json
+"btree": {
+  "mode": "tree",
+  "root": "g_tree_root",
+  "children": ["left", "right"],
+  "fields": [
+    { "label": "Key",   "expr": "key" },
+    { "label": "Label", "expr": "label" }
+  ]
+}
+```
+
+`children` isn't limited to two — list as many child-pointer fields as the node
+has (e.g. `["first_child","next_sibling"]` for an n-ary tree). Each is followed
+from every node; an again-visited guard keeps the walk finite, and unreadable or
+NULL children stop that branch.
+
 ---
 
 ### Grouping / tree (`groupBy` + `${master}`)
