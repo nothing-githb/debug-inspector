@@ -2,6 +2,15 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.60.4] - 2026-06-15
+
+### Fixed
+- **Tree edges now clearly enter the top of each node.** With wide cards, the tree-edge
+  curves became nearly flat and read as if the line entered from the side. Tree edges are
+  now drawn as org-chart orthogonal routes — straight down from the parent, horizontal at
+  the mid-level, then straight down into the child's top-centre (rounded corners) — so the
+  entry point is unambiguously the top at any card width.
+
 ## [0.60.3] - 2026-06-15
 
 ### Fixed

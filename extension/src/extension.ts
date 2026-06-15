@@ -2225,13 +2225,23 @@ function getHtml(): string {
         ' L' + bx + ',' + my;
     }
     if (type === 'tree') {
-      // ağaç: HER ZAMAN dikey (ebeveyn alt-orta -> çocuk üst-orta) -> ağaç görünümü korunur (geniş ağaçta yandan çıkmaz);
-      // çocuk yukarı sürüklenirse üst->alt tersine döner. Ok yine hedefe doğru (orient=auto).
+      // ağaç: ORG-CHART dik köşeli yol — ebeveyn alt-ortadan ÇIK, orta seviyede yatay git, çocuk üst-ortaya
+      // DİK İN (köşeler yuvarlatılmış). Geniş kartlarda bile giriş NOKTASI net biçimde üst-orta olur (yan değil).
+      // Çocuk yukarı sürüklenirse dikey yön ters döner. Ok hedefe dik girer (orient=auto).
+      var tex = a.x + a.w / 2, tbx = b.x + b.w / 2;
       var down = (b.y + b.h / 2) >= (a.y + a.h / 2);
-      var tex = a.x + a.w / 2, tey = down ? a.y + a.h : a.y;
-      var tbx = b.x + b.w / 2, tby = down ? b.y : b.y + b.h;
-      var tmid = (tey + tby) / 2;
-      return 'M' + tex + ',' + tey + ' C' + tex + ',' + tmid + ' ' + tbx + ',' + tmid + ' ' + tbx + ',' + tby;
+      var tey = down ? a.y + a.h : a.y;        // ebeveyn çıkış kenarı
+      var tby = down ? b.y : b.y + b.h;        // çocuk giriş kenarı (üst-orta)
+      if (Math.abs(tbx - tex) < 1) return 'M' + tex + ',' + tey + ' L' + tbx + ',' + tby;   // tam hizalı -> düz dikey
+      var tmy = (tey + tby) / 2;               // yatay koşunun seviyesi (seviyeler arası orta)
+      var vd = tby >= tey ? 1 : -1, hd = tbx >= tex ? 1 : -1;
+      var rr = Math.min(10, Math.abs(tby - tey) / 2, Math.abs(tbx - tex) / 2);   // köşe yarıçapı (boşluğa göre küçülür)
+      return 'M' + tex + ',' + tey +
+        ' L' + tex + ',' + (tmy - vd * rr) +
+        ' Q' + tex + ',' + tmy + ' ' + (tex + hd * rr) + ',' + tmy +
+        ' L' + (tbx - hd * rr) + ',' + tmy +
+        ' Q' + tbx + ',' + tmy + ' ' + tbx + ',' + (tmy + vd * rr) +
+        ' L' + tbx + ',' + tby;
     }
     // next / link / default: YÖNE DUYARLI yönlendirme — kaynağın ve hedefin birbirine BAKAN
     // en yakın kenarlarından bağla; bitiş teğeti hedefin İÇİNE doğru -> orient=auto ok her zaman
