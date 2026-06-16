@@ -318,6 +318,13 @@ Any `fields` entry can carry extra options beyond `label`/`expr`. One example ea
 { "label": "Free", "expr": "${expr}->stack_size - ${expr}->stack_used" }
 ```
 
+**Element index** — `${index}` is the element's index: the **array subscript** in `array` mode and the **slot index** in `index_list` mode (it is the row position in `linked_list`/`tree`). Like `${expr}`, it makes the expression **standalone** (not appended to the element), so use it alone to show the index, or inside another expression to index a parallel array:
+
+```json
+{ "label": "Idx",  "expr": "${index}" }
+{ "label": "Name", "expr": "g_names[${index}]" }
+```
+
 **Number base** (`base`) — default display base `dec` / `hex` / `bin` (also toggle live from the `10 / 16 / 2` button in the column header):
 
 ```json

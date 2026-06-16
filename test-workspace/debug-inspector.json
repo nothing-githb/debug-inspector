@@ -63,6 +63,7 @@
     "access": ".",
     "fields": [
       { "label": "ID",      "expr": "id" },
+      { "label": "Idx",     "expr": "${index}" },
       { "label": "Name",    "expr": "name" },
       { "label": "Period",  "expr": "period" },
       { "label": "Elapsed", "expr": "elapsed" },

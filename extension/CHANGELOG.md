@@ -2,6 +2,15 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.61.0] - 2026-06-16
+
+### Added
+- **`${index}` keyword in field expressions.** A field can use `${index}` to get the
+  element's index — the **array subscript** in `array` mode and the **slot index** in
+  `index_list` mode (the row position in `linked_list`/`tree`). Like `${expr}`, it makes the
+  expression standalone, so use it alone to show the index (`"expr": "${index}"`) or inside
+  another expression to index a parallel array (`"expr": "g_names[${index}]"`).
+
 ## [0.60.4] - 2026-06-15
 
 ### Fixed

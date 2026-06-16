@@ -352,7 +352,7 @@ async function refreshRow(section: string, rowIndex: number | null) {
     rawElem = e; access = '->';
   }
   const elem = scfg.wrap ? '(' + scfg.wrap.split('${expr}').join('(' + rawElem + ')') + ')' : rawElem;
-  const row = await collectRowFields(session, effFields, frameId, rawElem, elem, access);
+  const row = await collectRowFields(session, effFields, frameId, rawElem, elem, access, rawElem, elem, rowIndex);
   log?.debug(`refreshRow: ${section}[${rowIndex}] -> ${Object.keys(row).filter(k => k.indexOf('__') !== 0).length} field(s)`);
   panel.webview.postMessage({ type: 'patchRow', section, rowIndex, row });
   } finally { rel(); }
@@ -472,8 +472,10 @@ function structMember(map: Record<string, string> | null, path: string): string 
 async function collectRowFields(
   session: vscode.DebugSession, fields: FieldCfg[], frameId: number | undefined,
   rawElem: string, wrapElem: string, access: string,
-  editRaw: string = rawElem, editWrap: string = wrapElem   // __edit__ l-value için KARARLI eleman (linked'de cursor değil root->next^i)
+  editRaw: string = rawElem, editWrap: string = wrapElem,   // __edit__ l-value için KARARLI eleman (linked'de cursor değil root->next^i)
+  index?: number   // dizi index'i (array/index_list) / satır konumu (linked/tree) -> field expr/wrap/when'de ${index}
 ): Promise<Row> {
+  const subIdx = (s: string) => index != null ? s.split('${index}').join(String(index)) : s;   // wrap içindeki ${index} (resolveFieldExpr expr'i zaten çözer)
   const row: Row = {};
   row['__el__'] = editWrap;   // satırın KARARLI eleman ifadesi -> "watch ifadesi olarak kopyala" (tüm modlarda geçerli)
   let parsed: Record<string, string> | null = null;
@@ -483,9 +485,9 @@ async function collectRowFields(
     parsed = parseStruct((await gdbExec(session, `print ${blobExpr}`, frameId)).toString());
   }
   for (const f of fields) {
-    if (f.when && !condTrue(cleanValue(await gdbExec(session, `print ${resolveFieldExpr(f.when, rawElem, wrapElem, access)}`, frameId)))) { row[f.label] = ''; continue; }
-    let accExpr = resolveFieldExpr(f.expr, rawElem, wrapElem, access);
-    if (f.wrap) accExpr = f.wrap.split('${expr}').join('(' + accExpr + ')');
+    if (f.when && !condTrue(cleanValue(await gdbExec(session, `print ${resolveFieldExpr(f.when, rawElem, wrapElem, access, index)}`, frameId)))) { row[f.label] = ''; continue; }
+    let accExpr = resolveFieldExpr(f.expr, rawElem, wrapElem, access, index);
+    if (f.wrap) accExpr = subIdx(f.wrap.split('${expr}').join('(' + accExpr + ')'));
     let val: string | undefined;
     if (parsed && !f.wrap && isPlainExpr(f.expr)) {
       const m = structMember(parsed, f.expr);
@@ -495,15 +497,15 @@ async function collectRowFields(
     row[f.label] = val;
     if (f.editable) {
       // __edit__ KARARLI eleman üzerinden (geçici cursor değil) -> set var gerçek alanı değiştirir
-      let editExpr = resolveFieldExpr(f.expr, editRaw, editWrap, access);
-      if (f.wrap) editExpr = f.wrap.split('${expr}').join('(' + editExpr + ')');
+      let editExpr = resolveFieldExpr(f.expr, editRaw, editWrap, access, index);
+      if (f.wrap) editExpr = subIdx(f.wrap.split('${expr}').join('(' + editExpr + ')'));
       row['__edit__' + f.label] = editExpr;
     }
     // __lv__ = düz üye alanının KARARLI l-value'su (watchpoint hedefi: 'watch <lvalue>'). Sadece düz üye (computed/wrap değil).
-    if (isPlainExpr(f.expr) && !f.wrap) row['__lv__' + f.label] = resolveFieldExpr(f.expr, editRaw, editWrap, access);
+    if (isPlainExpr(f.expr) && !f.wrap) row['__lv__' + f.label] = resolveFieldExpr(f.expr, editRaw, editWrap, access, index);
     if (f.bar) {
       const mx = barMaxExpr(f);
-      if (mx) row['__bar__' + f.label] = /^\d+$/.test(mx) ? mx : cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access)}`, frameId));
+      if (mx) row['__bar__' + f.label] = /^\d+$/.test(mx) ? mx : cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index)}`, frameId));
     }
   }
   return row;
@@ -562,7 +564,7 @@ async function collectSection(
       // eleman: ((cast*)root)[i]; field'a erişmeden ÖNCE wrap ile sarmalanır
       const elemRaw = `${base}[${i}]`;
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + elemRaw + ')') + ')' : elemRaw; // (wrap)<access>field
-      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access));
+      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, i));   // ${index} = i (dizi index'i)
     }
   } else if (cfg.mode === 'index_list') {
     // Dizi içinde index ile bağlı liste: head index'inden başla, next alanı sonraki index'i verir
@@ -595,7 +597,7 @@ async function collectSection(
       const elemRaw = `${base}[${idx}]`;
       // field'a erişmeden ÖNCE wrap ile sarmalanır (çıktı parantezlenir: (wrap)<access>field)
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + elemRaw + ')') + ')' : elemRaw;
-      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access));
+      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, fromIdx));   // ${index} = bu slotun dizi index'i
       // next şablonu: ${expr}=ham eleman (wrap ile aynı), ${wrapped_expr}=wrap/cast'li eleman; yoksa elem<access>next
       const hasTpl = cfg.next && (cfg.next.indexOf('${expr}') !== -1 || cfg.next.indexOf('${wrapped_expr}') !== -1);
       const nextExpr = hasTpl
@@ -627,7 +629,7 @@ async function collectSection(
       // elemana erişmeden ÖNCE wrap; kararlı yol ifadesi (root->left->right...) edit/watch için
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + node.expr + ')') + ')' : node.expr;
       const myIdx = rows.length;
-      const row = await collectRowFields(session, cfg.fields, frameId, node.expr, elem, '->', node.expr, elem);
+      const row = await collectRowFields(session, cfg.fields, frameId, node.expr, elem, '->', node.expr, elem, myIdx);   // ${index} = BFS sırası
       row['__parent__'] = node.parent < 0 ? '' : String(node.parent);
       rows.push(row);
       for (const cf of childFields) queue.push({ expr: `${node.expr}->${cf}`, parent: myIdx });
@@ -654,7 +656,7 @@ async function collectSection(
         sRaw = cfg.root; for (let k = 0; k < rows.length; k++) sRaw = sRaw + '->' + nx;
         sElem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + sRaw + ')') + ')' : sRaw;
       }
-      rows.push(await collectRowFields(session, cfg.fields, frameId, cursor, elem, '->', sRaw, sElem));
+      rows.push(await collectRowFields(session, cfg.fields, frameId, cursor, elem, '->', sRaw, sElem, rows.length));   // ${index} = satır konumu (0-based)
       log.trace(`linked_list "${name}" node ${guard - 1}: cursor=${cur} → advance via ${cursor}->${cfg.next}`);
       // #2: advance + sonraki değeri (null-check) TEK çağrıda — eski 'set' + ayrı 'print cursor' yerine
       cur = cleanValue(await gdbExec(session, `print ${cursor} = ${cursor}->${cfg.next}`, frameId));
@@ -736,9 +738,13 @@ function barMaxExpr(f: FieldCfg): string {
 // Alan/bar ifadesini GDB print ifadesine çevir. ${expr}=ham eleman, ${wrapped_expr}=wrap/cast'li eleman
 // (wrap/next ile AYNI semantik) -> elemanı birden çok kez referanslayan aritmetik (örn stack_top - stack_base) mümkün.
 // Yer tutucu yoksa varsayılan: (wrap'li eleman)<access><ifade>.
-function resolveFieldExpr(expr: string, rawElem: string, wrappedElem: string, access: string): string {
-  if (expr.indexOf('${expr}') !== -1 || expr.indexOf('${wrapped_expr}') !== -1) {
-    return expr.split('${wrapped_expr}').join('(' + wrappedElem + ')').split('${expr}').join('(' + rawElem + ')');
+function resolveFieldExpr(expr: string, rawElem: string, wrappedElem: string, access: string, index?: number): string {
+  const hasIdx = index != null && expr.indexOf('${index}') !== -1;
+  // ${expr}/${wrapped_expr}/${index} -> STANDALONE ifade (elemana eklenmez). ${index} = dizi index'i (array/index_list).
+  if (expr.indexOf('${expr}') !== -1 || expr.indexOf('${wrapped_expr}') !== -1 || hasIdx) {
+    let e = expr.split('${wrapped_expr}').join('(' + wrappedElem + ')').split('${expr}').join('(' + rawElem + ')');
+    if (index != null) e = e.split('${index}').join(String(index));
+    return e;
   }
   return `${wrappedElem}${access}${expr}`;
 }

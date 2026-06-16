@@ -497,6 +497,11 @@ Any `fields` entry can carry these — one example each:
 // Computed value: ${expr} (raw) / ${wrapped_expr} (after cast/wrap) — arithmetic, casts, ternaries
 { "label": "Free", "expr": "${expr}->stack_size - ${expr}->stack_used" }
 
+// Element index: ${index} = array subscript (array) / slot index (index_list); row position in linked_list/tree.
+// Standalone like ${expr} (not appended to the element): use alone, or to index a parallel array.
+{ "label": "Idx",  "expr": "${index}" }
+{ "label": "Name", "expr": "g_names[${index}]" }
+
 // Number base: dec / hex / bin default (also a 10/16/2 toggle in the column header)
 { "label": "Handle", "expr": "id", "base": "hex" }
 
