@@ -318,11 +318,17 @@ Any `fields` entry can carry extra options beyond `label`/`expr`. One example ea
 { "label": "Free", "expr": "${expr}->stack_size - ${expr}->stack_used" }
 ```
 
-**Element index** — `${index}` is the element's index: the **array subscript** in `array` mode and the **slot index** in `index_list` mode (it is the row position in `linked_list`/`tree`). Like `${expr}`, it makes the expression **standalone** (not appended to the element), so use it alone to show the index, or inside another expression to index a parallel array:
+**Element index** — `${index}` is the element's index: the **array subscript** in `array` mode and the **slot index** in `index_list` mode. In `linked_list` it is the **position from the head** (0 = head, 1 = its `next`, …); in `tree` it is the **breadth-first visit order** (0 = root, then level by level, left-to-right within each node's `children`) — the same flat index that `__parent__` references. Like `${expr}`, it makes the expression **standalone** (not appended to the element), so use it alone to show the index, or inside another expression to index a parallel array:
 
 ```json
 { "label": "Idx",  "expr": "${index}" }
 { "label": "Name", "expr": "g_names[${index}]" }
+```
+
+**Tree depth** — in `tree` mode, `${depth}` is the node's depth: **0 for the root**, 1 for its children, 2 for grandchildren, and so on. Standalone like `${index}`:
+
+```json
+{ "label": "Depth", "expr": "${depth}" }
 ```
 
 **Number base** (`base`) — default display base `dec` / `hex` / `bin` (also toggle live from the `10 / 16 / 2` button in the column header):

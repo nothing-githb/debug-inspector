@@ -2,6 +2,18 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.62.0] - 2026-06-16
+
+### Added
+- **`${depth}` keyword for `tree` sections.** A field can use `${depth}` to show the node's
+  depth in the tree — `0` for the root, `1` for its children, `2` for grandchildren, and so
+  on. Standalone like `${index}` (e.g. `{ "label": "Depth", "expr": "${depth}" }`).
+
+### Changed
+- **Clarified `${index}` for `linked_list` and `tree`.** Documented that `${index}` is the
+  position from the head in `linked_list` and the breadth-first visit order in `tree` (it
+  remains the array subscript in `array` and the slot index in `index_list`).
+
 ## [0.61.1] - 2026-06-16
 
 ### Fixed

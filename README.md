@@ -497,10 +497,13 @@ Any `fields` entry can carry these — one example each:
 // Computed value: ${expr} (raw) / ${wrapped_expr} (after cast/wrap) — arithmetic, casts, ternaries
 { "label": "Free", "expr": "${expr}->stack_size - ${expr}->stack_used" }
 
-// Element index: ${index} = array subscript (array) / slot index (index_list); row position in linked_list/tree.
-// Standalone like ${expr} (not appended to the element): use alone, or to index a parallel array.
+// Element index: ${index} = array subscript (array) / slot index (index_list);
+// position-from-head in linked_list; breadth-first visit order in tree (0=root). Standalone like ${expr}.
 { "label": "Idx",  "expr": "${index}" }
 { "label": "Name", "expr": "g_names[${index}]" }
+
+// Tree depth: ${depth} = node depth in a tree section (0 = root, 1 = children, ...). Standalone.
+{ "label": "Depth", "expr": "${depth}" }
 
 // Number base: dec / hex / bin default (also a 10/16/2 toggle in the column header)
 { "label": "Handle", "expr": "id", "base": "hex" }
