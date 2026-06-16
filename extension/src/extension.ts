@@ -1285,9 +1285,13 @@ function getHtml(): string {
 
   /* sayısal kolonlar sağa hizalı + tabular figürler (tam değer her hücrede title'da) */
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  /* başlık içeriği: etiket solda, taban düğmesi sağda — FLEX (float değil) ki th genişliği düğmeye de yer ayırsın -> üst üste binmez */
+  .thc { display: flex; align-items: center; gap: 8px; }
+  .thc .th-name { flex: 1 1 auto; white-space: nowrap; }
+  th.num .thc .th-name { text-align: right; }
   /* başlık sağ üstü: per-kolon sayı tabanı düğmesi (tıkla: raw→10→16→2) */
   .hb {
-    float: right; margin-left: 8px; cursor: pointer; padding: 0 4px; border-radius: 3px;
+    flex: 0 0 auto; cursor: pointer; padding: 0 4px; border-radius: 3px;
     font-size: 9px; font-weight: 700; opacity: 0.5;
     font-family: var(--vscode-editor-font-family, monospace);
   }
@@ -1833,7 +1837,7 @@ function getHtml(): string {
         : '';
       h += '<th class="' + cls + '" data-col="' + esc(c) + '" draggable="true" ' +
         'title="Click: sort  ·  Drag: reorder  ·  Right-click: columns">' +
-        ctrl + esc(c) + '<span class="sort-ind">' + ind + '</span></th>';
+        '<div class="thc"><span class="th-name">' + esc(c) + '<span class="sort-ind">' + ind + '</span></span>' + ctrl + '</div></th>';
     }
     return h;
   }

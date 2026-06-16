@@ -2,6 +2,14 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.61.1] - 2026-06-16
+
+### Fixed
+- **Column header: the label and the number-base toggle no longer overlap.** The
+  per-column base toggle (`raw`/`dec`/`hex`/`bin`) was floated, so a narrow numeric column
+  didn't reserve width for it and it overlapped the column name. The header now uses a flex
+  layout (label on the left, toggle on the right) and the column widens to fit both.
+
 ## [0.61.0] - 2026-06-16
 
 ### Added
