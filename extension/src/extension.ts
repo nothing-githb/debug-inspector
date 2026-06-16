@@ -352,7 +352,7 @@ async function refreshRow(section: string, rowIndex: number | null) {
     rawElem = e; access = '->';
   }
   const elem = scfg.wrap ? '(' + scfg.wrap.split('${expr}').join('(' + rawElem + ')') + ')' : rawElem;
-  const row = await collectRowFields(session, effFields, frameId, rawElem, elem, access, rawElem, elem, rowIndex);
+  const row = await collectRowFields(session, effFields, frameId, rawElem, elem, access, rawElem, elem, scfg.mode === 'array' ? rowIndex : undefined);   // ${index} sadece array'de (linked'de gerçek dizi index'i yok)
   log?.debug(`refreshRow: ${section}[${rowIndex}] -> ${Object.keys(row).filter(k => k.indexOf('__') !== 0).length} field(s)`);
   panel.webview.postMessage({ type: 'patchRow', section, rowIndex, row });
   } finally { rel(); }
@@ -631,7 +631,7 @@ async function collectSection(
       // elemana erişmeden ÖNCE wrap; kararlı yol ifadesi (root->left->right...) edit/watch için
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + node.expr + ')') + ')' : node.expr;
       const myIdx = rows.length;
-      const row = await collectRowFields(session, cfg.fields, frameId, node.expr, elem, '->', node.expr, elem, myIdx, node.depth);   // ${index} = BFS sırası, ${depth} = derinlik (kök=0)
+      const row = await collectRowFields(session, cfg.fields, frameId, node.expr, elem, '->', node.expr, elem, undefined, node.depth);   // ağaçta ${index} YOK (gerçek dizi index'i değil); yalnız ${depth} = derinlik (kök=0)
       row['__parent__'] = node.parent < 0 ? '' : String(node.parent);
       rows.push(row);
       for (const cf of childFields) queue.push({ expr: `${node.expr}->${cf}`, parent: myIdx, depth: node.depth + 1 });
@@ -658,7 +658,7 @@ async function collectSection(
         sRaw = cfg.root; for (let k = 0; k < rows.length; k++) sRaw = sRaw + '->' + nx;
         sElem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + sRaw + ')') + ')' : sRaw;
       }
-      rows.push(await collectRowFields(session, cfg.fields, frameId, cursor, elem, '->', sRaw, sElem, rows.length));   // ${index} = satır konumu (0-based)
+      rows.push(await collectRowFields(session, cfg.fields, frameId, cursor, elem, '->', sRaw, sElem));   // linked_list'te ${index} YOK (gerçek dizi index'i değil)
       log.trace(`linked_list "${name}" node ${guard - 1}: cursor=${cur} → advance via ${cursor}->${cfg.next}`);
       // #2: advance + sonraki değeri (null-check) TEK çağrıda — eski 'set' + ayrı 'print cursor' yerine
       cur = cleanValue(await gdbExec(session, `print ${cursor} = ${cursor}->${cfg.next}`, frameId));

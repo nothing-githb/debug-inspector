@@ -128,7 +128,7 @@
     ]
   },
 
-  "//btree": "tree modu: ikili arama ağacı (g_tree_root). 'children' çocuk pointer alanları (left/right). Graph görünümünde hiyerarşik ağaç olarak çizilir (kök üstte, çocuklar altta). 'Idx' = ${index} (BFS sırası), 'Depth' = ${depth} (kök=0).",
+  "//btree": "tree modu: ikili arama ağacı (g_tree_root). 'children' çocuk pointer alanları (left/right). Graph görünümünde hiyerarşik ağaç olarak çizilir (kök üstte, çocuklar altta). 'Depth' = ${depth} (kök=0). Not: ağaçta gerçek dizi index'i olmadığı için ${index} YOK; ${index} yalnız array ve index_list içindir.",
   "btree": {
     "mode": "tree",
     "root": "g_tree_root",
@@ -136,7 +136,6 @@
     "fields": [
       { "label": "Key",   "expr": "key" },
       { "label": "Label", "expr": "label" },
-      { "label": "Idx",   "expr": "${index}" },
       { "label": "Depth", "expr": "${depth}" },
       { "label": "Left", "expr": "left" },
       { "label": "Right", "expr": "right" }

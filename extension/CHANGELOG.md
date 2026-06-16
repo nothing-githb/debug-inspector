@@ -2,6 +2,14 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.62.1] - 2026-06-16
+
+### Changed
+- **`${index}` is now limited to `array` and `index_list`.** Those are the only modes with a
+  real container index (the array subscript / slot index). It is no longer offered in
+  `linked_list` or `tree` — 0.62.0 briefly exposed it there as a row position, which was
+  misleading. For tree position, use `${depth}`.
+
 ## [0.62.0] - 2026-06-16
 
 ### Added
