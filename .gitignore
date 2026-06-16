@@ -26,3 +26,7 @@ test-workspace/.vscode/tasks.json
 
 # Export output from the panel's "Export JSON" button
 debug-inspector-export.json
+
+# Personal reference manuals (PowerPC / QorIQ) kept locally; not part of the project
+/qoriq.txt
+/sim_ppc.txt
