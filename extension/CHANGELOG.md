@@ -2,6 +2,18 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.65.2] - 2026-06-16
+
+### Changed
+- **Table/Graph toggle is on the right in both views.** In the graph view, the **▤ Table**
+  button moved to the right of the toolbar to match where **◉ Graph** sits in the table view.
+
+### Fixed
+- **Flag (and value-map) fields no longer overlap on graph cards.** Cards now size to the
+  **displayed** text (decoded flag names / mapped text) rather than the raw integer, and an
+  over-long field value is truncated with `…` so it can never overlap its label — even when
+  many flags are set. Full values remain visible in the table view.
+
 ## [0.65.1] - 2026-06-16
 
 ### Fixed

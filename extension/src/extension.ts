@@ -1832,12 +1832,12 @@ function getHtml(): string {
   function toolbarHtml(st) {
     let h = '<div class="tbl-bar">';
     if (st.view === 'graph') {
-      h += '<button class="btn view-toggle" title="Switch back to the table view">▤ Table</button>';
       h += '<button class="btn graph-fit" title="Fit the graph to the view">⤢ Fit</button>';
       if (sectionHasLinks(st.sec)) h += '<button class="btn links-toggle' + ((st.gv && st.gv.links) ? ' on' : '') + '" title="Show cross-section relationship links (purple) — outgoing and incoming">⇄ Links</button>';
       h += '<input class="gv-search" type="text" placeholder="Find — text or field>=3" value="' + esc((st.gv && st.gv.q) || '') + '" title="Find nodes by text, or a field test like count>=3 / state=running (operators > >= < <= = !=). Enter / Shift+Enter to cycle, Esc to clear">';
       h += '<span class="gv-srch-n"></span>';
       h += '<span class="grow"></span>';
+      h += '<button class="btn view-toggle" title="Switch back to the table view">▤ Table</button>';   // tablo/graph toggle her iki görünümde de SAĞDA
       h += '<button class="btn map-toggle' + ((st.gv && st.gv.mini) ? ' on' : '') + '" title="Show / hide the minimap">◉ Map</button>';
       h += '<button class="btn cols-btn" title="Show / hide / reorder the fields shown on cards">▦ Fields</button>';
       h += '</div>';
@@ -2130,16 +2130,23 @@ function getHtml(): string {
     var CARDH = Math.max(46, 26 + Math.max(0, cols.length - 1) * 16);   // kart yüksekliği: TÜM görünür alanlar gösterilsin (section başına tek-tip)
     // kart GENİŞLİĞİ de DİNAMİK: en geniş başlık/alan satırından (section başına tek-tip, ızgara hizası korunur)
     var CARDW = GVW;
+    // kartta GÖRÜNEN metin: flags çözülmüş isimler / valueMap metni / shortVal -> genişlik buna göre (flag'ler taşmasın)
+    var _sflags = sec.flags || {}, _svmap = sec.valueMap || {};
+    var _disp = function (c, raw) {
+      if (_sflags[c]) { var ft = flagsText(_sflags[c], raw); if (ft != null) return ft; }
+      if (_svmap[c]) { var ve = valueMapEntry(_svmap[c], raw, shortVal(raw)); if (ve) return ve.text; }
+      return shortVal(raw);
+    };
     if (cols.length) {
       var _allR = sec.grouped ? (sec.groups || []).reduce(function (a, g) { return a.concat(g.rows || []); }, []) : (sec.rows || []);
       var _cw = 128, _n = Math.min(_allR.length, 400);
       for (var _i2 = 0; _i2 < _n; _i2++) {
         var _r2 = _allR[_i2]; if (!_r2) continue;
-        var _tw = String(shortVal(_r2[cols[0]] != null ? _r2[cols[0]] : '')).length * 7.2 + 30;   // başlık + state/link nokta payı
+        var _tw = String(_disp(cols[0], _r2[cols[0]] != null ? _r2[cols[0]] : '')).length * 7.2 + 30;   // başlık + state/link nokta payı
         if (_tw > _cw) _cw = _tw;
         for (var _ci = 1; _ci < cols.length; _ci++) {
           var _c2 = cols[_ci];
-          var _lw = String(_c2).length * 6 + 16 + String(shortVal(_r2[_c2] != null ? _r2[_c2] : '')).length * 6;   // label + boşluk + değer
+          var _lw = String(_c2).length * 6 + 16 + String(_disp(_c2, _r2[_c2] != null ? _r2[_c2] : '')).length * 6;   // label + boşluk + GÖRÜNEN değer
           if (_lw > _cw) _cw = _lw;
         }
       }
@@ -2410,6 +2417,9 @@ function getHtml(): string {
       var fft = flags[c] ? flagsText(flags[c], row[c]) : null;   // bayrak alanı: set bitlerin isimleri (birleşik)
       var fvText = (fft != null) ? fft : (fvm ? fvm.text : shortVal(row[c]));
       var fvFill = (fft == null && fvm && fvm.hex) ? ' fill="' + fvm.hex + '"' : '';
+      // değer etiketle çakışmasın: karta sığmayan uzun değer (çok flag'li alan gibi) … ile kısaltılır (tam değer tablo görünümünde)
+      var _avail = n.w - 12 - 14 - (String(c).length * 6) - 8, _maxc = Math.max(3, Math.floor(_avail / 6));
+      if (String(fvText).length > _maxc) fvText = String(fvText).slice(0, _maxc - 1) + '…';
       if (bars[c]) {
         var used = toIntVal(row[c]), mxv = toIntVal(row['__bar__' + c]);
         if (used !== null && mxv !== null && mxv > 0) {
