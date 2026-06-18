@@ -1086,6 +1086,7 @@ function openPanel(context: vscode.ExtensionContext) {
   panel.webview.onDidReceiveMessage(
     async (msg: any) => {
       if (msg?.type === 'refresh') { log?.debug('webview: manual refresh'); doRefresh(); return; }
+      if (msg?.type === 'ready') { log?.debug('webview: ready (load/move) — resend data if stopped'); if (lastStopped) doRefresh(); return; }
       if (msg?.type === 'openConfig') { log?.debug('webview: open config'); vscode.commands.executeCommand('debugInspector.openConfig'); return; }
       if (msg?.type === 'activeTab') { if (typeof msg.section === 'string') activeTab = msg.section; return; }
       if (msg?.type === 'setColumns' && typeof msg.section === 'string' && msg.section) {
@@ -3403,6 +3404,10 @@ function getHtml(): string {
       }
     }
   });
+  // Panel başka bir editor grubuna / yeni pencereye TAŞININCA webview yeniden yüklenir ve tüm
+  // istemci-tarafı durum (secState, çizilen tablolar) sıfırlanır. Mesaj dinleyici kurulduktan SONRA
+  // "hazırım" de -> uzantı, durmuşsa veriyi yeniden gönderir, böylece taşımada veriler kaybolmaz.
+  vscodeApi.postMessage({ type: 'ready' });
 </script>
 </body>
 </html>`;

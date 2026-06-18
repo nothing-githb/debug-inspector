@@ -2,6 +2,15 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.65.1] - 2026-06-16
+
+### Fixed
+- **Data no longer disappears when the panel is moved.** Moving the panel to another editor
+  group or a new window reloads the webview and clears its in-memory state, and the panel
+  only repopulated on the next debugger stop. The webview now signals readiness on every
+  (re)load and the extension re-sends the current data, so the tables come back immediately
+  after a move (while the debugger is stopped).
+
 ## [0.65.0] - 2026-06-16
 
 ### Added
