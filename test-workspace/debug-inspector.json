@@ -42,6 +42,7 @@
     ]
   },
 
+  "//semaphores": "processes altında ağaç (groupBy). 'Proc' alanı ${master} ile satırın AİT OLDUĞU process'in adını gösterir (master=processes, linked_list -> erişim '->'). ${master} yalnız gruplu bölümlerde çalışır.",
   "semaphores": {
     "groupBy": "processes",
     "mode": "linked_list",
@@ -49,6 +50,7 @@
     "next": "next",
     "fields": [
       { "label": "ID",         "expr": "id" },
+      { "label": "Proc",       "expr": "${master}->name" },
       { "label": "Count",      "expr": "count", "editable": true},
       { "label": "Max",        "expr": "max_count" },
       { "label": "Waiting",    "expr": "waiting" },

@@ -332,6 +332,14 @@ Any `fields` entry can carry extra options beyond `label`/`expr`. One example ea
 { "label": "Depth", "expr": "${depth}" }
 ```
 
+**Master element** (`${master}`) — in a **grouped** section (one with `groupBy`), `${master}` is the master element this row belongs to. Beyond `root`/`head`/`count`/`nil`, it now also works inside a field's `expr` (and `wrap`/`when`), so a child row can show or compute from its parent. You write the access (`->` for a pointer master, `.` for a value master); like `${expr}` it's standalone:
+
+```json
+{ "label": "Proc", "expr": "${master}->name" }
+```
+
+Using `${master}` in a section **without** `groupBy` does nothing (there's no master) — the extension leaves it unresolved (the cell errors) and shows a warning prompting you to add `groupBy` or remove `${master}`.
+
 **Number base** (`base`) — default display base `dec` / `hex` / `bin` (also toggle live from the `10 / 16 / 2` button in the column header):
 
 ```json

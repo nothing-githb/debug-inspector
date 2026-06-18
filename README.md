@@ -506,6 +506,10 @@ Any `fields` entry can carry these — one example each:
 // (Trees have no ${index}; ${depth} is the tree's positional keyword.)
 { "label": "Depth", "expr": "${depth}" }
 
+// Master element: in a grouped section (groupBy), ${master} = the master this row belongs to.
+// Works in expr/wrap/when (you write the access). Standalone. Used in a non-grouped section -> warning.
+{ "label": "Proc", "expr": "${master}->name" }
+
 // Number base: dec / hex / bin default (also a 10/16/2 toggle in the column header)
 { "label": "Handle", "expr": "id", "base": "hex" }
 

@@ -208,6 +208,7 @@ function setupConfigWatcher(context: vscode.ExtensionContext) {
 // değiştiyse GDB'ye hiç gitme — istemci-tarafı yeniden çiz. "Her zaman her şeyi çekme" optimizasyonu.
 function onConfigChange() {
   if (!panel || !lastStopped) return;
+  masterWarned.clear();   // config değişti -> ${master} uyarısı düzeltildiyse tekrar uyarma; hâlâ yanlışsa bir kez daha uyar
   const cfg = loadConfig();
   if (!cfg) { doRefresh(); return; }   // okunamadı/şema bozuk -> güvenli tam yenile
   const secs = extractSections(cfg);
@@ -491,10 +492,11 @@ async function collectRowFields(
   rawElem: string, wrapElem: string, access: string,
   editRaw: string = rawElem, editWrap: string = wrapElem,   // __edit__ l-value için KARARLI eleman (linked'de cursor değil root->next^i)
   index?: number,   // dizi index'i (array/index_list) / satır konumu (linked/tree) -> field expr/wrap/when'de ${index}
-  depth?: number    // ağaç derinliği (kök=0) -> ${depth} (yalnız tree modunda anlamlı)
+  depth?: number,   // ağaç derinliği (kök=0) -> ${depth} (yalnız tree modunda anlamlı)
+  master?: string   // gruplu bölümde master eleman ifadesi -> ${master} (yalnız grouped'da geçilir)
 ): Promise<Row> {
-  // wrap içindeki ${index}/${depth} (resolveFieldExpr expr'i zaten çözer)
-  const subVars = (s: string) => { let r = s; if (index != null) r = r.split('${index}').join(String(index)); if (depth != null) r = r.split('${depth}').join(String(depth)); return r; };
+  // wrap içindeki ${index}/${depth}/${master} (resolveFieldExpr expr'i zaten çözer)
+  const subVars = (s: string) => { let r = s; if (master != null) r = r.split('${master}').join('(' + master + ')'); if (index != null) r = r.split('${index}').join(String(index)); if (depth != null) r = r.split('${depth}').join(String(depth)); return r; };
   const row: Row = {};
   row['__el__'] = editWrap;   // satırın KARARLI eleman ifadesi -> "watch ifadesi olarak kopyala" (tüm modlarda geçerli)
   let parsed: Record<string, string> | null = null;
@@ -504,8 +506,8 @@ async function collectRowFields(
     parsed = parseStruct((await gdbExec(session, `print ${blobExpr}`, frameId)).toString());
   }
   for (const f of fields) {
-    if (f.when && !condTrue(cleanValue(await gdbExec(session, `print ${resolveFieldExpr(f.when, rawElem, wrapElem, access, index, depth)}`, frameId)))) { row[f.label] = ''; continue; }
-    let accExpr = resolveFieldExpr(f.expr, rawElem, wrapElem, access, index, depth);
+    if (f.when && !condTrue(cleanValue(await gdbExec(session, `print ${resolveFieldExpr(f.when, rawElem, wrapElem, access, index, depth, master)}`, frameId)))) { row[f.label] = ''; continue; }
+    let accExpr = resolveFieldExpr(f.expr, rawElem, wrapElem, access, index, depth, master);
     if (f.wrap) accExpr = subVars(f.wrap.split('${expr}').join('(' + accExpr + ')'));
     let val: string | undefined;
     if (parsed && !f.wrap && isPlainExpr(f.expr)) {
@@ -516,15 +518,15 @@ async function collectRowFields(
     row[f.label] = val;
     if (f.editable) {
       // __edit__ KARARLI eleman üzerinden (geçici cursor değil) -> set var gerçek alanı değiştirir
-      let editExpr = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth);
+      let editExpr = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth, master);
       if (f.wrap) editExpr = subVars(f.wrap.split('${expr}').join('(' + editExpr + ')'));
       row['__edit__' + f.label] = editExpr;
     }
     // __lv__ = düz üye alanının KARARLI l-value'su (watchpoint hedefi: 'watch <lvalue>'). Sadece düz üye (computed/wrap değil).
-    if (isPlainExpr(f.expr) && !f.wrap) row['__lv__' + f.label] = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth);
+    if (isPlainExpr(f.expr) && !f.wrap) row['__lv__' + f.label] = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth, master);
     if (f.bar) {
       const mx = barMaxExpr(f);
-      if (mx) row['__bar__' + f.label] = /^\d+$/.test(mx) ? mx : cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index, depth)}`, frameId));
+      if (mx) row['__bar__' + f.label] = /^\d+$/.test(mx) ? mx : cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index, depth, master)}`, frameId));
     }
   }
   return row;
@@ -581,7 +583,8 @@ async function collectSection(
   frameId: number | undefined,
   cursor: string,
   name: string = '',
-  isStale?: () => boolean   // iptal kancası: continue/yeni durak gelince satır döngüsünü erken bırak (çalışan hedefe print atma)
+  isStale?: () => boolean,   // iptal kancası: continue/yeni durak gelince satır döngüsünü erken bırak (çalışan hedefe print atma)
+  masterExpr?: string   // gruplu bölümde bu grubun master eleman ifadesi -> field expr'lerinde ${master}
 ): Promise<Row[]> {
   const rows: Row[] = [];
   const max = cfg.max ?? 1024;
@@ -598,7 +601,7 @@ async function collectSection(
       // eleman: ((cast*)root)[i]; field'a erişmeden ÖNCE wrap ile sarmalanır
       const elemRaw = `${base}[${i}]`;
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + elemRaw + ')') + ')' : elemRaw; // (wrap)<access>field
-      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, i));   // ${index} = i (dizi index'i)
+      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, i, undefined, masterExpr));   // ${index} = i (dizi index'i)
     }
   } else if (cfg.mode === 'index_list') {
     // Dizi içinde index ile bağlı liste: head index'inden başla, next alanı sonraki index'i verir
@@ -631,7 +634,7 @@ async function collectSection(
       const elemRaw = `${base}[${idx}]`;
       // field'a erişmeden ÖNCE wrap ile sarmalanır (çıktı parantezlenir: (wrap)<access>field)
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + elemRaw + ')') + ')' : elemRaw;
-      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, fromIdx));   // ${index} = bu slotun dizi index'i
+      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, fromIdx, undefined, masterExpr));   // ${index} = bu slotun dizi index'i
       // next şablonu: ${expr}=ham eleman (wrap ile aynı), ${wrapped_expr}=wrap/cast'li eleman; yoksa elem<access>next
       const hasTpl = cfg.next && (cfg.next.indexOf('${expr}') !== -1 || cfg.next.indexOf('${wrapped_expr}') !== -1);
       const nextExpr = hasTpl
@@ -663,7 +666,7 @@ async function collectSection(
       // elemana erişmeden ÖNCE wrap; kararlı yol ifadesi (root->left->right...) edit/watch için
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + node.expr + ')') + ')' : node.expr;
       const myIdx = rows.length;
-      const row = await collectRowFields(session, cfg.fields, frameId, node.expr, elem, '->', node.expr, elem, undefined, node.depth);   // ağaçta ${index} YOK (gerçek dizi index'i değil); yalnız ${depth} = derinlik (kök=0)
+      const row = await collectRowFields(session, cfg.fields, frameId, node.expr, elem, '->', node.expr, elem, undefined, node.depth, masterExpr);   // ağaçta ${index} YOK (gerçek dizi index'i değil); ${depth} = derinlik (kök=0); ${master} grouped ağaçta geçerli
       row['__parent__'] = node.parent < 0 ? '' : String(node.parent);
       rows.push(row);
       for (const cf of childFields) queue.push({ expr: `${node.expr}->${cf}`, parent: myIdx, depth: node.depth + 1 });
@@ -690,7 +693,7 @@ async function collectSection(
         sRaw = cfg.root; for (let k = 0; k < rows.length; k++) sRaw = sRaw + '->' + nx;
         sElem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + sRaw + ')') + ')' : sRaw;
       }
-      rows.push(await collectRowFields(session, cfg.fields, frameId, cursor, elem, '->', sRaw, sElem));   // linked_list'te ${index} YOK (gerçek dizi index'i değil)
+      rows.push(await collectRowFields(session, cfg.fields, frameId, cursor, elem, '->', sRaw, sElem, undefined, undefined, masterExpr));   // linked_list'te ${index} YOK; ${master} grouped'da geçerli
       log.trace(`linked_list "${name}" node ${guard - 1}: cursor=${cur} → advance via ${cursor}->${cfg.next}`);
       // #2: advance + sonraki değeri (null-check) TEK çağrıda — eski 'set' + ayrı 'print cursor' yerine
       cur = cleanValue(await gdbExec(session, `print ${cursor} = ${cursor}->${cfg.next}`, frameId));
@@ -772,13 +775,16 @@ function barMaxExpr(f: FieldCfg): string {
 // Alan/bar ifadesini GDB print ifadesine çevir. ${expr}=ham eleman, ${wrapped_expr}=wrap/cast'li eleman
 // (wrap/next ile AYNI semantik) -> elemanı birden çok kez referanslayan aritmetik (örn stack_top - stack_base) mümkün.
 // Yer tutucu yoksa varsayılan: (wrap'li eleman)<access><ifade>.
-function resolveFieldExpr(expr: string, rawElem: string, wrappedElem: string, access: string, index?: number, depth?: number): string {
+function resolveFieldExpr(expr: string, rawElem: string, wrappedElem: string, access: string, index?: number, depth?: number, master?: string): string {
   const hasIdx = index != null && expr.indexOf('${index}') !== -1;
   const hasDepth = depth != null && expr.indexOf('${depth}') !== -1;
-  // ${expr}/${wrapped_expr}/${index}/${depth} -> STANDALONE ifade (elemana eklenmez).
-  // ${index} = dizi index'i (array/index_list) ya da satır konumu (linked/tree BFS); ${depth} = ağaç derinliği (kök=0).
-  if (expr.indexOf('${expr}') !== -1 || expr.indexOf('${wrapped_expr}') !== -1 || hasIdx || hasDepth) {
+  const hasMaster = master != null && expr.indexOf('${master}') !== -1;
+  // ${expr}/${wrapped_expr}/${index}/${depth}/${master} -> STANDALONE ifade (elemana eklenmez).
+  // ${index} = dizi index'i (array/index_list) ya da satır konumu (linked/tree BFS); ${depth} = ağaç derinliği (kök=0);
+  // ${master} = gruplu bölümde bu satırın AİT OLDUĞU master elemanı (erişimi kullanıcı yazar: ${master}->name).
+  if (expr.indexOf('${expr}') !== -1 || expr.indexOf('${wrapped_expr}') !== -1 || hasIdx || hasDepth || hasMaster) {
     let e = expr.split('${wrapped_expr}').join('(' + wrappedElem + ')').split('${expr}').join('(' + rawElem + ')');
+    if (master != null) e = e.split('${master}').join('(' + master + ')');
     if (index != null) e = e.split('${index}').join(String(index));
     if (depth != null) e = e.split('${depth}').join(String(depth));
     return e;
@@ -835,6 +841,21 @@ function fieldValueMap(fields: FieldCfg[]): Record<string, Record<string, { text
 }
 
 // Yalnız AKTİF sütunları gdb'den çek (pasif sütunlar için print çalıştırılmaz)
+// ${master} yalnız gruplu (groupBy) bölümlerde anlamlı. Gruplu OLMAYAN bir bölümün herhangi bir field
+// ifadesinde (expr/wrap/when) ${master} varsa: Output'a uyarı + (bölüm başına bir kez) görünür uyarı.
+const masterWarned = new Set<string>();
+function warnMasterMisuseIfAny(name: string, cfg: SectionCfg) {
+  const uses = (cfg.fields || []).some(f =>
+    (typeof f.expr === 'string' && f.expr.indexOf('${master}') !== -1) ||
+    (typeof f.wrap === 'string' && f.wrap.indexOf('${master}') !== -1) ||
+    (typeof f.when === 'string' && f.when.indexOf('${master}') !== -1));
+  if (!uses) return;
+  log?.warn('section "' + name + '" uses ${master} in a field expression but is not grouped (no "groupBy"); ${master} only resolves in grouped sections, so it will not be substituted.');
+  if (!masterWarned.has(name)) {
+    masterWarned.add(name);
+    vscode.window.showWarningMessage('Debug Inspector: "' + name + '" uses ${master} but is not grouped — add "groupBy" to this section, or remove ${master}.');
+  }
+}
 async function buildSection(
   session: vscode.DebugSession,
   cfg: SectionCfg,
@@ -843,6 +864,7 @@ async function buildSection(
   name: string,
   isStale?: () => boolean
 ): Promise<Section> {
+  warnMasterMisuseIfAny(name, cfg);   // gruplu OLMAYAN bölümde ${master} kullanılmışsa uyar (çözülmez)
   const eff = effectiveColumns(name, cfg.fields);
   const effFields = eff.active
     .map(l => cfg.fields.find(f => f.label === l))
@@ -923,7 +945,7 @@ async function buildGrouped(
       head: scfg.head ? substituteMaster(scfg.head, selExpr) : scfg.head,
       nil: scfg.nil ? substituteMaster(scfg.nil, selExpr) : scfg.nil
     };
-    const rows = await collectSection(session, subCfg, frameId, '$rg_' + i + '_' + mi, name, isStale);
+    const rows = await collectSection(session, subCfg, frameId, '$rg_' + i + '_' + mi, name, isStale, selExpr);   // ${master} = bu grubun master elemanı (field expr'lerinde)
     const key = rowKeyAt(m.sec, mi) ?? String(mi);
     const label = m.cfg.label
       ? nodeLabel(cleanValue(await gdbExec(session, `print (${selExpr})${masterAcc}${m.cfg.label}`, frameId)))

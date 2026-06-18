@@ -2,6 +2,17 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.64.0] - 2026-06-16
+
+### Added
+- **`${master}` in field expressions.** In a **grouped** section (`groupBy`), a field's `expr`
+  (and `wrap`/`when`) can now use `${master}` to reference the master element the row belongs
+  to — e.g. show the owning process on each child row with `{ "expr": "${master}->name" }`.
+  You write the access (`->` / `.`); it's standalone like `${expr}`. (Previously `${master}`
+  resolved only in the section-level `root`/`head`/`count`/`nil`.)
+- **Warning for `${master}` in a non-grouped section.** It can't resolve without a master, so
+  the extension logs a warning and shows a one-time prompt to add `groupBy` or remove `${master}`.
+
 ## [0.63.0] - 2026-06-16
 
 ### Added
