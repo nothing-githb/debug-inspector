@@ -548,6 +548,10 @@ Any `fields` entry can carry these — one example each:
   panel; if the debugger is already stopped, it refreshes immediately.
 - **Debug Inspector: Show Log** (`debugInspector.showLog`) — reveal the
   *Debug Inspector* Output channel.
+- **Debug Inspector: Open Config File** (`debugInspector.openConfig`) — open the
+  `debug-inspector.json` resolved from `configPath` (offers to create a starter if it
+  doesn't exist). Also a **⚙ Config** button in the panel's top bar; default key
+  `Ctrl/Cmd+K Ctrl/Cmd+I` when the editor isn't focused (rebind in *Keyboard Shortcuts*).
 
 ## Troubleshooting & logging
 

@@ -111,7 +111,24 @@ export function activate(context: vscode.ExtensionContext) {
       openPanel(context);
       if (lastStopped) refresh(lastStopped.session, lastStopped.threadId);
     }),
-    vscode.commands.registerCommand('debugInspector.showLog', () => log.show())
+    vscode.commands.registerCommand('debugInspector.showLog', () => log.show()),
+    vscode.commands.registerCommand('debugInspector.openConfig', async () => {
+      log.debug('command: open config');
+      const file = configFilePath();
+      if (!file) { vscode.window.showWarningMessage('Debug Inspector: open a workspace folder so the config path can be resolved.'); return; }
+      try {
+        if (!fs.existsSync(file)) {
+          const pick = await vscode.window.showInformationMessage(`Debug Inspector: no config file at ${file}`, 'Create starter', 'Cancel');
+          if (pick !== 'Create starter') return;
+          fs.writeFileSync(file, STARTER_CONFIG, 'utf8');
+          log.info(`created starter config: ${file}`);
+        }
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+        await vscode.window.showTextDocument(doc);
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Debug Inspector: could not open config — ${e?.message ?? e}`);
+      }
+    })
   );
 
   const types: string[] =
@@ -516,6 +533,21 @@ async function collectRowFields(
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
+// "Create starter" ile yazılan asgari örnek config (yeni kullanıcı boş başlamasın)
+const STARTER_CONFIG = `{
+  "//": "Debug Inspector config — her veri yapısını burada tanımla. Tüm seçenekler için README'ye bak.",
+  "example": {
+    "mode": "array",
+    "root": "g_my_array",
+    "count": "g_my_count",
+    "access": ".",
+    "fields": [
+      { "label": "ID",   "expr": "id" },
+      { "label": "Name", "expr": "name" }
+    ]
+  }
+}
+`;
 // configPath mutlaksa doğrudan; göreliyse workspace köküne göre çözülür
 function configFilePath(): string | undefined {
   const rel: string =
@@ -1022,6 +1054,7 @@ function openPanel(context: vscode.ExtensionContext) {
   panel.webview.onDidReceiveMessage(
     async (msg: any) => {
       if (msg?.type === 'refresh') { log?.debug('webview: manual refresh'); doRefresh(); return; }
+      if (msg?.type === 'openConfig') { log?.debug('webview: open config'); vscode.commands.executeCommand('debugInspector.openConfig'); return; }
       if (msg?.type === 'activeTab') { if (typeof msg.section === 'string') activeTab = msg.section; return; }
       if (msg?.type === 'setColumns' && typeof msg.section === 'string' && msg.section) {
         log?.debug(`webview: setColumns ${msg.section} hidden=[${(msg.hidden || []).join(', ')}] refetch=${!!msg.refetch}`);
@@ -1439,6 +1472,7 @@ function getHtml(): string {
     <span id="changes" class="pill chg hidden"></span>
     <span class="grow"></span>
     <span id="ts" class="ts"></span>
+    <button id="config-btn" class="btn" title="Open the config file (debug-inspector.json)">⚙ Config</button>
     <button id="sections-btn" class="btn" title="Show / hide sections (tabs)">▤ Sections</button>
     <button id="export-btn" class="btn" title="Export all sections' data as JSON">⤓ JSON</button>
     <button id="pause" class="btn" title="Pause/resume auto-refresh on each stop">⏸ Pause</button>
@@ -3125,6 +3159,11 @@ function getHtml(): string {
   if (exportBtn) exportBtn.addEventListener('click', e => {
     e.stopPropagation();
     vscodeApi.postMessage({ type: 'export', json: buildExport() });
+  });
+  const configBtn = document.getElementById('config-btn');
+  if (configBtn) configBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    vscodeApi.postMessage({ type: 'openConfig' });
   });
   secMenu.addEventListener('change', e => {
     const cb = e.target.closest('input[data-act="secvis"]');

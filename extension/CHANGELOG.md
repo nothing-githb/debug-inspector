@@ -2,6 +2,15 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.63.0] - 2026-06-16
+
+### Added
+- **Quick access to the config file.** A **⚙ Config** button in the panel's top bar opens
+  your `debug-inspector.json` (and offers to create a starter if it doesn't exist yet). The
+  same is exposed as the **“Debug Inspector: Open Config File”** command
+  (`debugInspector.openConfig`), with a default keybinding `Ctrl/Cmd+K Ctrl/Cmd+I` when the
+  editor isn't focused — rebind it to any key from *Keyboard Shortcuts*.
+
 ## [0.62.1] - 2026-06-16
 
 ### Changed

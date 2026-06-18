@@ -2,7 +2,7 @@
   "name": "debug-inspector",
   "displayName": "Debug Inspector",
   "description": "Visualize your own C/C++ data structures — threads, semaphores, mutexes, queues, linked lists, any struct collection — as live, sortable tables while debugging with GDB. Config-driven and read-only.",
-  "version": "0.62.1",
+  "version": "0.63.0",
   "publisher": "halistahasahin",
   "license": "MIT",
   "icon": "icon.png",
@@ -72,6 +72,18 @@
       {
         "command": "debugInspector.showLog",
         "title": "Debug Inspector: Show Log"
+      },
+      {
+        "command": "debugInspector.openConfig",
+        "title": "Debug Inspector: Open Config File"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "debugInspector.openConfig",
+        "key": "ctrl+k ctrl+i",
+        "mac": "cmd+k cmd+i",
+        "when": "!editorTextFocus"
       }
     ],
     "configuration": {
