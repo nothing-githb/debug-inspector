@@ -2,6 +2,16 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.65.0] - 2026-06-16
+
+### Added
+- **Bit-flags field (`flags`).** Decode a flag-style integer and show its **set** bits by
+  name. The key is the bit **mask** (hex `0x04` or decimal `4`); the value is a name string
+  or `{ "text", "color" }`. A flag shows when `(value & mask) == mask`, so single bits and
+  multi-bit masks both work. Bits not covered by any mask are appended as `+0x..` (nothing
+  hidden); value `0` shows `0`. Rendered as colored pills in the table and joined names on
+  the graph card.
+
 ## [0.64.0] - 2026-06-16
 
 ### Added

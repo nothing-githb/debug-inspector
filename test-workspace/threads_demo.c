@@ -41,6 +41,7 @@ typedef struct kmutex {
     int             owner;     /* owning thread id, 0 = free */
     int             locked;    /* 0 / 1 */
     int             waiters;
+    unsigned        flags;     /* bit bayraklar: 0x1 BUSY, 0x2 OWNED, 0x4 ROBUST, 0x8 RECURSIVE, 0x10 (eslenmeyen) */
     struct kmutex  *next;
 } kmutex_t;
 
@@ -173,6 +174,10 @@ static kmutex_t *mk_mutex(int id, const char *name, int owner, int locked, int w
     kmutex_t *m = &g_mutexes[g_mutex_count++];
     m->id = id; m->name = name; m->owner = owner;
     m->locked = locked; m->waiters = waiters; m->next = NULL;
+    /* bayrak biti karisimi: BUSY(0x1)=locked, OWNED(0x2)=owner!=0, ROBUST(0x4)=id%3==0,
+       RECURSIVE(0x8)=id&1, 0x10=id%5==0 (config'te eslenmez -> +0x10 kalan olarak gosterilir) */
+    m->flags = (locked ? 0x1u : 0u) | (owner ? 0x2u : 0u) | ((id % 3 == 0) ? 0x4u : 0u)
+             | ((id & 1) ? 0x8u : 0u) | ((id % 5 == 0) ? 0x10u : 0u);
     return m;
 }
 

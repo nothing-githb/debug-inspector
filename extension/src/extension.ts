@@ -14,6 +14,7 @@ interface FieldCfg {
   wrap?: string;  // alana ERİŞTİKTEN SONRA değeri dönüştür; ${expr} = erişilen alan değeri. Örn expr "data" + wrap "((widget_t *)${expr})->x" -> ((widget_t *)(elem.data))->x. Sonuç hücreye yazılır.
   badge?: Record<string, string>;  // değer -> renk rozet eşlemesi (case-insensitive tam eşleşme); renk adı (green/blue/red/amber/purple/cyan/gray) veya #rrggbb. Verilirse built-in State/Discipline heuristic'i yerine bu kullanılır.
   valueMap?: Record<string, string | { text?: string; color?: string }>;  // değer -> görüntü. Düz string verilirse görüntülenecek METİN; {text,color} ile metin ve/veya renk. color: renk adı veya #rrggbb. badge'den farkı: badge yalnız renklendirir, valueMap METNİ de değiştirir (örn 2 -> "XXX" + #ff0000). Tablo hücresinde ve graph kartında uygulanır.
+  flags?: Record<string, string | { text?: string; color?: string }>;  // BAYRAK alanı: anahtar = bit MASKESİ (hex 0x04 veya dec 4); integer değerin set olan bitleri çözülüp isimleri gösterilir ((val & mask) == mask). Düz string = isim; {text,color} ile renk. Eşlenmeyen kalan bitler sonda +0x.. olarak gösterilir.
 }
 interface SectionCfg {
   mode: 'linked_list' | 'array' | 'index_list' | 'tree';
@@ -43,6 +44,7 @@ interface Section {
   links?: Record<string, { section: string; match?: string }>;   // kolon -> çapraz-referans hedefi (section + match kolonu)
   badges?: Record<string, Record<string, string>>;   // kolon -> değer->renk rozet eşlemesi
   valueMap?: Record<string, Record<string, { text?: string; color?: string }>>;   // kolon -> değer -> {metin, renk} görüntü eşlemesi (badge'in metin değiştiren üst kümesi)
+  flags?: Record<string, Record<string, { text?: string; color?: string }>>;   // kolon -> bit MASKESİ (string) -> {metin, renk}; integer'ın set bitleri çözülür
   needsSelection?: boolean;   // gruplu bölüm: master bölüm boş/bulunamadı
   grouped?: boolean;          // groupBy ile ağaç olarak gruplanmış
   groups?: Group[];           // her master elemanı için bir grup
@@ -224,7 +226,7 @@ function onConfigChange() {
     panel.webview.postMessage({
       type: 'presentationUpdate', section: name,
       bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields),
-      links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields)
+      links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields), flags: fieldFlags(scfg.fields)
     });
   }
 }
@@ -819,24 +821,32 @@ function fieldBadges(fields: FieldCfg[]): Record<string, Record<string, string>>
   return m;
 }
 // config-driven değer eşlemesi: değer -> {metin, renk} (field.valueMap). Düz string -> {text}; nesne -> {text?,color?}.
+// "string | {text,color}" haritasını {text?,color?} haritasına normalle (valueMap + flags ortak kullanır)
+function normTextColorMap(raw: unknown): Record<string, { text?: string; color?: string }> {
+  const m: Record<string, { text?: string; color?: string }> = {};
+  if (!raw || typeof raw !== 'object') return m;
+  for (const k of Object.keys(raw as object)) {
+    const v = (raw as Record<string, unknown>)[k];
+    if (typeof v === 'string') { m[k] = { text: v }; }
+    else if (v && typeof v === 'object') {
+      const e: { text?: string; color?: string } = {};
+      const vt = (v as { text?: unknown }).text, vc = (v as { color?: unknown }).color;
+      if (typeof vt === 'string') e.text = vt;
+      if (typeof vc === 'string') e.color = vc;
+      if (e.text != null || e.color != null) m[k] = e;
+    }
+  }
+  return m;
+}
 function fieldValueMap(fields: FieldCfg[]): Record<string, Record<string, { text?: string; color?: string }>> {
   const out: Record<string, Record<string, { text?: string; color?: string }>> = {};
-  for (const f of fields) {
-    if (!f.valueMap || typeof f.valueMap !== 'object') continue;
-    const m: Record<string, { text?: string; color?: string }> = {};
-    for (const k of Object.keys(f.valueMap)) {
-      const v = (f.valueMap as Record<string, unknown>)[k];
-      if (typeof v === 'string') { m[k] = { text: v }; }
-      else if (v && typeof v === 'object') {
-        const e: { text?: string; color?: string } = {};
-        const vt = (v as { text?: unknown }).text, vc = (v as { color?: unknown }).color;
-        if (typeof vt === 'string') e.text = vt;
-        if (typeof vc === 'string') e.color = vc;
-        if (e.text != null || e.color != null) m[k] = e;
-      }
-    }
-    if (Object.keys(m).length) out[f.label] = m;
-  }
+  for (const f of fields) { if (!f.valueMap) continue; const m = normTextColorMap(f.valueMap); if (Object.keys(m).length) out[f.label] = m; }
+  return out;
+}
+// BAYRAK alanı: kolon -> bit maskesi (string) -> {metin, renk}
+function fieldFlags(fields: FieldCfg[]): Record<string, Record<string, { text?: string; color?: string }>> {
+  const out: Record<string, Record<string, { text?: string; color?: string }>> = {};
+  for (const f of fields) { if (!f.flags) continue; const m = normTextColorMap(f.flags); if (Object.keys(m).length) out[f.label] = m; }
   return out;
 }
 
@@ -872,7 +882,7 @@ async function buildSection(
   const rows = await collectSection(session, { ...cfg, fields: effFields }, frameId, cursor, name, isStale);
   log?.debug(`section "${name}" (${cfg.mode}, root=${cfg.root}): ${rows.length} row(s); active=[${eff.active.join(', ')}]`);
   const kind: 'linked' | 'array' | 'index' | 'tree' = cfg.mode === 'array' ? 'array' : cfg.mode === 'index_list' ? 'index' : cfg.mode === 'tree' ? 'tree' : 'linked';
-  return { name, columnsAll: eff.order, hidden: eff.hidden, rows, summary: summarize(name, rows), bases: fieldBases(cfg.fields), bars: fieldBars(cfg.fields), links: fieldLinks(cfg.fields), badges: fieldBadges(cfg.fields), valueMap: fieldValueMap(cfg.fields), kind };
+  return { name, columnsAll: eff.order, hidden: eff.hidden, rows, summary: summarize(name, rows), bases: fieldBases(cfg.fields), bars: fieldBars(cfg.fields), links: fieldLinks(cfg.fields), badges: fieldBadges(cfg.fields), valueMap: fieldValueMap(cfg.fields), flags: fieldFlags(cfg.fields), kind };
 }
 
 // ---------------------------------------------------------------------------
@@ -956,7 +966,7 @@ async function buildGrouped(
   log?.debug(`grouped "${name}" by ${scfg.groupBy}: ${groups.length} group(s), ${total} row(s)`);
   // grouped bölüm için de kind: groupBy + mode:tree -> graph view her grubu kendi ağacı olarak çizebilsin
   const gkind: 'linked' | 'array' | 'index' | 'tree' = scfg.mode === 'array' ? 'array' : scfg.mode === 'index_list' ? 'index' : scfg.mode === 'tree' ? 'tree' : 'linked';
-  return { name, columnsAll: eff.order, hidden: eff.hidden, rows: [], summary: `${total} ${name} · ${groups.length} ${scfg.groupBy}`, grouped: true, groups, kind: gkind, bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields), links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields) };
+  return { name, columnsAll: eff.order, hidden: eff.hidden, rows: [], summary: `${total} ${name} · ${groups.length} ${scfg.groupBy}`, grouped: true, groups, kind: gkind, bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields), links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields), flags: fieldFlags(scfg.fields) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1376,6 +1386,8 @@ function getHtml(): string {
 
   .badge { font-size: 11px; padding: 2px 9px; border-radius: 5px; font-weight: 600; display: inline-block; }
   .vmap { font-weight: 500; }   /* renksiz valueMap metni (yalnız metin değiştirildi) */
+  .flags { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }   /* bayrak alanı: set bitlerin rozetleri */
+  .flag-res { font-size: 11px; opacity: 0.55; }   /* eşlenmeyen kalan bitler (+0x..) */
   .s-run   { background: rgba(46,204,113,0.18); color: #2ecc71; }
   .s-ready { background: rgba(52,152,219,0.18); color: #3498db; }
   .s-block { background: rgba(231,76,60,0.18);  color: #e74c3c; }
@@ -1690,6 +1702,32 @@ function getHtml(): string {
     return { text: text, hex: badgeHex(vm.color) };
   }
   function asNum(v){ const m=String(v).match(/-?\\d+/); return m?parseInt(m[0],10):NaN; }
+  // BAYRAK: değeri ve maske anahtarlarını int'e çevir (hex 0x.. veya dec)
+  function toBits(v){ var s=String(v==null?'':v).trim(); var h=s.match(/^[+-]?0x[0-9a-fA-F]+/); if(h) return parseInt(h[0],16); var d=s.match(/-?\\d+/); return d?parseInt(d[0],10):NaN; }
+  // integer'ın set bitlerini maske haritasına göre çöz: { items:[{text,hex}], residual } | null
+  function flagDecode(map, raw){
+    if(!map) return null;
+    var n=toBits(raw); if(isNaN(n)) return null;
+    var nu=n>>>0, items=[], covered=0;
+    var keys=Object.keys(map).map(function(k){ return { k:k, m:(toBits(k)>>>0) }; }).filter(function(x){ return x.m>0; }).sort(function(a,b){ return a.m-b.m; });
+    keys.forEach(function(x){ if((nu & x.m)===x.m){ var e=map[x.k]; items.push({ text:(e.text!=null&&e.text!=='')?e.text:('0x'+x.m.toString(16)), hex:badgeHex(e.color) }); covered=(covered|x.m)>>>0; } });
+    var residual=(nu & ~covered)>>>0;
+    if(!items.length && !residual) return null;   // değer 0 / hiç bit yok -> ham göster
+    return { items:items, residual:residual };
+  }
+  function flagsHtml(map, raw){
+    var d=flagDecode(map, raw); if(!d) return null;
+    var h='';
+    d.items.forEach(function(it){ h += it.hex ? '<span class="badge" style="background:'+it.hex+'30;color:'+it.hex+'">'+esc(it.text)+'</span>' : '<span class="vmap">'+esc(it.text)+'</span>'; });
+    if(d.residual) h += '<span class="flag-res">+0x'+d.residual.toString(16)+'</span>';
+    return '<span class="flags">'+h+'</span>';
+  }
+  function flagsText(map, raw){
+    var d=flagDecode(map, raw); if(!d) return null;
+    var parts=d.items.map(function(it){ return it.text; });
+    if(d.residual) parts.push('+0x'+d.residual.toString(16));
+    return parts.join(' ');
+  }
 
   // Erişilemeyen (gdb hata/erişim yok) veya NULL pointer (0x0) -> "-"
   function isUnreadable(v) {
@@ -1938,6 +1976,7 @@ function getHtml(): string {
     const links = opts.links || {};
     const badges = opts.badges || {};
     const valueMap = opts.valueMap || {};
+    const flags = opts.flags || {};
     const sortCol = opts.sortCol;
     const rk = rowKeyOf(row, columns);
     let h = '<tr' + (ri != null ? ' data-ri="' + ri + '"' : '') + (row['__el__'] ? ' data-el="' + esc(row['__el__']) + '"' : '') + '>';   // data-ri=kaynak satır; data-el=watch ifadesi (kararlı eleman)
@@ -1963,8 +2002,11 @@ function getHtml(): string {
       const lk = links[c];
       let inner;
       const vmap = (!isDash(raw)) ? valueMapEntry(valueMap[c], raw, disp) : null;   // config-driven değer eşlemesi (metin + renk); badge'in önünde
+      const flagH = (!isDash(raw) && flags[c]) ? flagsHtml(flags[c], raw) : null;   // bayrak alanı: set bitleri çöz (vmap/badge'den önce)
       if (lk && raw !== '' && !isDash(raw) && linkHasTarget(lk, raw)) {
         inner = '<a class="xref" data-sec="' + esc(lk.section) + '" data-match="' + esc(lk.match || '') + '" data-val="' + esc(raw) + '">' + esc(vmap ? vmap.text : disp) + '</a>';
+      } else if (flagH) {
+        inner = flagH;
       } else if (vmap) {
         inner = vmap.hex
           ? '<span class="badge" style="background:' + vmap.hex + '30;color:' + vmap.hex + '">' + esc(vmap.text) + '</span>'
@@ -2332,8 +2374,8 @@ function getHtml(): string {
     }
     return 'M' + ex + ',' + ey + ' C' + c1x + ',' + c1y + ' ' + c2x + ',' + c2y + ' ' + bx + ',' + by;
   }
-  function nodeSvg(n, badges, bars, valueMap) {
-    valueMap = valueMap || {};
+  function nodeSvg(n, badges, bars, valueMap, flags) {
+    valueMap = valueMap || {}; flags = flags || {};
     if (n.group) {
       return '<g class="gnode gv-group" data-id="' + esc(n.id) + '" transform="translate(' + n.x + ',' + n.y + ')">' +
         '<rect class="card" width="' + n.w + '" height="' + n.h + '" rx="8"></rect>' +
@@ -2364,8 +2406,9 @@ function getHtml(): string {
     cols.slice(1).forEach(function (c) {
       s += '<text class="flab" x="14" y="' + fy + '">' + esc(c) + '</text>';
       var fvm = valueMapEntry(valueMap[c], row[c], shortVal(row[c]));   // config-driven değer eşlemesi (metin + renk)
-      var fvText = fvm ? fvm.text : shortVal(row[c]);
-      var fvFill = (fvm && fvm.hex) ? ' fill="' + fvm.hex + '"' : '';
+      var fft = flags[c] ? flagsText(flags[c], row[c]) : null;   // bayrak alanı: set bitlerin isimleri (birleşik)
+      var fvText = (fft != null) ? fft : (fvm ? fvm.text : shortVal(row[c]));
+      var fvFill = (fft == null && fvm && fvm.hex) ? ' fill="' + fvm.hex + '"' : '';
       if (bars[c]) {
         var used = toIntVal(row[c]), mxv = toIntVal(row['__bar__' + c]);
         if (used !== null && mxv !== null && mxv > 0) {
@@ -2388,7 +2431,7 @@ function getHtml(): string {
     var st = secState[name], body = bodyEl(name); if (!st || !st.sec || !body) return;
     var idx = idxOf(name);
     var model = graphModel(st);
-    var badges = st.sec.badges || {}, bars = st.sec.bars || {}, valueMap = st.sec.valueMap || {};
+    var badges = st.sec.badges || {}, bars = st.sec.bars || {}, valueMap = st.sec.valueMap || {}, flags = st.sec.flags || {};
     var tbar = toolbarHtml(st);
     var summary = '<div class="summary">' + esc(st.sec.summary || '') + '</div>';
     if (!model.nodes.length) { body.innerHTML = summary + tbar + '<div class="gv-empty">Nothing to graph (list is empty).</div>'; return; }
@@ -2398,7 +2441,7 @@ function getHtml(): string {
     var eg = ''; model.edges.forEach(function (ed) { var a = model.byId[ed.from], b = model.byId[ed.to]; if (!a || !b) return; eg += '<path class="gedge ' + ed.type + '" data-f="' + esc(ed.from) + '" data-t="' + esc(ed.to) + '" d="' + edgePath(a, b, ed.type) + '" marker-end="url(#gar' + idx + ')"></path>'; });
     var ng = '', mini = '';
     model.nodes.forEach(function (n) {
-      ng += nodeSvg(n, badges, bars, valueMap);
+      ng += nodeSvg(n, badges, bars, valueMap, flags);
       var mcol = n.ghost ? '#b07cc6' : n.group ? '#5a5a5a' : (nodeColor(n.row, n.cols, badges, valueMap) || '#7d8590');
       mini += '<rect class="mnode" x="' + n.x + '" y="' + n.y + '" width="' + n.w + '" height="' + n.h + '" fill="' + mcol + '"></rect>';
     });
@@ -2670,7 +2713,7 @@ function getHtml(): string {
     const allRows = grouped ? st.sec.groups.reduce((a, g) => a.concat(g.rows), []) : st.sec.rows;
     const numCols = numericCols(cols, allRows);
     st.numCols = numCols;   // ▦ Columns menüsü per-kolon base düğmesi için kullanır
-    const opts = { numCols: numCols, colBase: st.colBase || {}, bars: st.sec.bars || {}, links: st.sec.links || {}, badges: st.sec.badges || {}, valueMap: st.sec.valueMap || {}, sortCol: st.sortCol };
+    const opts = { numCols: numCols, colBase: st.colBase || {}, bars: st.sec.bars || {}, links: st.sec.links || {}, badges: st.sec.badges || {}, valueMap: st.sec.valueMap || {}, flags: st.sec.flags || {}, sortCol: st.sortCol };
     const summary = '<div class="summary">' + esc(st.sec.summary) + '</div>';
     const bar = toolbarHtml(st);
     let table;
@@ -3328,6 +3371,7 @@ function getHtml(): string {
         if (m.links) st.sec.links = m.links;
         if (m.badges) st.sec.badges = m.badges;
         if (m.valueMap) st.sec.valueMap = m.valueMap;
+        if (m.flags) st.sec.flags = m.flags;
         if (m.bases) { st.sec.bases = m.bases; st.colBase = st.colBase || {}; for (const k in m.bases) st.colBase[k] = m.bases[k]; }
         paint(m.section); buildColsMenu(m.section);
       }

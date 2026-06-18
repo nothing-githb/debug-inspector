@@ -396,6 +396,19 @@ Using `${master}` in a section **without** `groupBy` does nothing (there's no ma
 { "label": "Active", "expr": "active", "valueMap": { "0": "idle", "1": "armed" } }
 ```
 
+**Bit flags** (`flags`) — decode an integer whose bits are independent flags and show the **set** ones by name. The **key is the bit mask** (hex `0x04` or decimal `4`); the value is a name string or `{ "text", "color" }`. A flag shows when `(value & mask) == mask`, so single bits *and* multi-bit masks work. Bits not covered by any mask are appended as `+0x..` so nothing is hidden; value `0` (no bits) just shows `0`. Renders as colored pills in the table and joined names on the graph card:
+
+```json
+{ "label": "Flags", "expr": "flags", "flags": {
+    "0x1": { "text": "BUSY", "color": "amber" },
+    "0x2": { "text": "OWNED", "color": "blue" },
+    "0x4": { "text": "ROBUST", "color": "green" },
+    "0x8": "RECURSIVE"
+} }
+```
+
+(e.g. `flags == 0x1B` → **BUSY · OWNED · RECURSIVE · +0x10** — the `0x10` bit isn't mapped, so it's shown as a residual.)
+
 ### Notes on `expr` and rendering
 
 You never declare types or sizes. Whatever `expr` evaluates to is formatted by GDB according to its type: enums render as names (`RUNNING`, `FIFO`), pointers as addresses, integers as numbers. A fixed-size `char` array is shown only up to the first `\0` — the trailing NULs GDB prints (`"abc\000\000"` or `"abc", '\000' <repeats N times>`) are dropped, so you just see `"abc"`. A value GDB **cannot read** — `No symbol …`, `cannot access memory`, `optimized out`, or an evaluation error — is shown as a distinct red **⚠** with the GDB error in its tooltip (and logged to the Output channel). A **NULL pointer** (`0x0`) is shown as a muted `-` (visually separate from an error), and a plain integer `0` is shown as `0`.

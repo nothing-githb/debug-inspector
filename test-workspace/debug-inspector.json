@@ -37,6 +37,7 @@
       { "label": "ID",      "expr": "id" },
       { "label": "Name",    "expr": "name" },
       { "label": "Locked",  "expr": "locked", "editable": true, "valueMap": { "0": { "text": "free", "color": "#2ecc71" }, "1": { "text": "HELD", "color": "#e74c3c" } } },
+      { "label": "Flags",   "expr": "flags", "flags": { "0x1": { "text": "BUSY", "color": "amber" }, "0x2": { "text": "OWNED", "color": "blue" }, "0x4": { "text": "ROBUST", "color": "green" }, "0x8": "RECURSIVE" } },
       { "label": "Owner",   "expr": "owner",   "when": "locked",            "link": { "section": "threads", "match": "ID" } },
       { "label": "Waiting", "expr": "waiters", "when": "${expr}.locked == 0" }
     ]
