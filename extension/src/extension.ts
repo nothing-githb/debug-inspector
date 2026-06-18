@@ -1456,15 +1456,19 @@ function getHtml(): string {
   .gbarbg { fill: rgba(128,128,128,0.24); }
   .gpct { fill: var(--vscode-descriptionForeground, #8a8a8a); font-size: 9.5px; }
   .gv-detail {
-    position: absolute; top: 12px; right: 12px; width: 232px; max-height: calc(100% - 28px); overflow: auto;
+    position: absolute; top: 12px; right: 12px; width: auto; min-width: 232px; max-width: calc(100% - 24px);
+    max-height: calc(100% - 28px); overflow: auto;
     background: var(--vscode-menu-background, var(--vscode-editor-background));
     border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(128,128,128,0.4)));
     border-radius: 9px; padding: 11px 13px; font-size: 12px; display: none;
     box-shadow: 0 4px 18px rgba(0,0,0,0.4);
   }
   .gv-detail h3 { margin: 0 0 7px; font-size: 13px; padding-right: 14px; word-break: break-all; }
-  .gv-detail .grow2 { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; color: var(--vscode-descriptionForeground, #8a8a8a); }
-  .gv-detail .grow2 b { color: var(--vscode-foreground); font-weight: 500; word-break: break-all; text-align: right; }
+  /* etiket solda, değer sağda; değer büyürse panel YANA genişler (max-width'e kadar), sonra ALTA sarar -> veri kesilmez */
+  .gv-detail .grow2 { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 2px 0; color: var(--vscode-descriptionForeground, #8a8a8a); }
+  .gv-detail .grow2 > span { flex: 0 0 auto; }
+  .gv-detail .grow2 b { color: var(--vscode-foreground); font-weight: 500; overflow-wrap: anywhere; text-align: right; display: inline-flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; align-items: center; }
+  .gv-detail .gd-int { color: var(--vscode-descriptionForeground, #8a8a8a); font-weight: 400; }
   .gv-detail .close { position: absolute; top: 7px; right: 10px; cursor: pointer; opacity: 0.6; }
   .gv-detail .close:hover { opacity: 1; }
   .gv-banner { font-size: 11px; opacity: 0.7; margin: 6px 2px; }
@@ -2197,11 +2201,12 @@ function getHtml(): string {
         if (nodes.length >= GRAPH_MAX) { capped = true; return; }   // cap başlıkları da kapsasın -> üyesiz dangling grup kartı + cap aşımı olmasın
         if (col >= ncols) { col = 0; curX = GVPAD; curY += rowMaxH + GAPY; rowMaxH = 0; }
         var bx = curX, by = curY, gkey = (b.g.key != null ? b.g.key : b.gi);
+        var gcol = (st.collapsed || []).indexOf(gkey) !== -1;   // grup çökük mü (tablo ile AYNI durum: st.collapsed)
         var gw = Math.min(GVGROUPW, b.bw);   // grup başlığı bloktan taşmasın (dar tek-üyeli blokta)
-        var gnode = { id: 'g' + b.gi, group: true, label: b.g.label, count: b.rws.length, pkey: 'g:' + gkey, x: bx + (b.bw - gw) / 2, y: by, w: gw, h: GVGROUPH, members: [] };
+        var gnode = { id: 'g' + b.gi, group: true, label: b.g.label, count: b.rws.length, pkey: 'g:' + gkey, gkey: gkey, collapsed: gcol, x: bx + (b.bw - gw) / 2, y: by, w: gw, h: GVGROUPH, members: [] };
         nodes.push(gnode);
         var memTop = by + GVGROUPH + GVGY;
-        b.rws.forEach(function (r, ri) {
+        if (!gcol) b.rws.forEach(function (r, ri) {
           if (nodes.length >= GRAPH_MAX) { capped = true; return; }
           var mid = 'm' + b.gi + '_' + ri;
           if (b.tree) {
@@ -2217,7 +2222,7 @@ function getHtml(): string {
             edges.push({ from: 'g' + b.gi, to: mid, type: 'grouped' });
           }
         });
-        curX += b.bw + GAPX; rowMaxH = Math.max(rowMaxH, b.bh); col++;
+        curX += b.bw + GAPX; rowMaxH = Math.max(rowMaxH, gcol ? GVGROUPH : b.bh); col++;   // çökükse blok yalnız başlık yüksekliğinde
       });
     } else if (sec.kind === 'tree') {
       // hiyerarşik ağaç: kök üstte, çocuklar altta; x = alt-ağaç ortası (tidy), y = derinlik
@@ -2399,9 +2404,11 @@ function getHtml(): string {
   function nodeSvg(n, badges, bars, valueMap, flags) {
     valueMap = valueMap || {}; flags = flags || {};
     if (n.group) {
-      return '<g class="gnode gv-group" data-id="' + esc(n.id) + '" transform="translate(' + n.x + ',' + n.y + ')">' +
+      var gkAttr = (n.gkey != null) ? ' data-gkey="' + esc(String(n.gkey)) + '"' : '';   // sağ tık -> collapse/expand
+      var caret = n.collapsed ? '▸ ' : '▾ ';   // çökük/açık göstergesi (tablo başlığıyla aynı dil)
+      return '<g class="gnode gv-group' + (n.collapsed ? ' gv-collapsed' : '') + '" data-id="' + esc(n.id) + '"' + gkAttr + ' transform="translate(' + n.x + ',' + n.y + ')">' +
         '<rect class="card" width="' + n.w + '" height="' + n.h + '" rx="8"></rect>' +
-        '<text class="gtitle" x="12" y="' + (n.h / 2 + 4) + '">' + esc(shortVal(n.label)) + '</text>' +
+        '<text class="gtitle" x="12" y="' + (n.h / 2 + 4) + '">' + caret + esc(shortVal(n.label)) + '</text>' +
         '<text class="gsub" x="' + (n.w - 12) + '" y="' + (n.h / 2 + 4) + '" text-anchor="end">' + n.count + '</text>' +
         '</g>';
     }
@@ -2616,7 +2623,16 @@ function getHtml(): string {
       document.getElementById('gdt-' + idx).textContent = t;
       var html;
       if (n.group) html = '<div class="grow2"><span>members</span><b>' + n.count + '</b></div><div class="grow2"><span>group</span><b>' + esc(cap(name)) + '</b></div>';
-      else html = n.cols.map(function (c) { return '<div class="grow2"><span>' + esc(c) + '</span><b>' + esc(shortVal(n.row[c])) + '</b></div>'; }).join('');
+      else {
+        var _df = st.sec.flags || {}, _dvm = st.sec.valueMap || {};
+        // detayda da string'e/renge çevir; çevrilen değerin integer hali parantezde; veri kesilmez (CSS sarar/genişler)
+        var _cell = function (c, raw) {
+          if (_df[c]) { var fh = flagsHtml(_df[c], raw); if (fh != null) return fh + ' <span class="gd-int">(' + esc(shortVal(raw)) + ')</span>'; }
+          if (_dvm[c]) { var ve = valueMapEntry(_dvm[c], raw, shortVal(raw)); if (ve) { var pill = ve.hex ? '<span class="badge" style="background:' + ve.hex + '30;color:' + ve.hex + '">' + esc(ve.text) + '</span>' : '<span class="vmap">' + esc(ve.text) + '</span>'; var sv = shortVal(raw); return pill + (ve.text !== sv ? ' <span class="gd-int">(' + esc(sv) + ')</span>' : ''); } }
+          return esc(shortVal(raw));
+        };
+        html = n.cols.map(function (c) { return '<div class="grow2"><span>' + esc(c) + '</span><b>' + _cell(c, n.row[c]) + '</b></div>'; }).join('');
+      }
       document.getElementById('gdb-' + idx).innerHTML = html;
       det.style.display = 'block';
     }
@@ -2859,6 +2875,12 @@ function getHtml(): string {
     if (cc) { vscodeApi.postMessage({ type: 'copy', text: cc.dataset.text || '' }); for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return; }
     const cw = e.target.closest('.cell-watch');
     if (cw) { vscodeApi.postMessage({ type: 'copyWatch', text: cw.dataset.el || '' }); for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return; }
+    const gco = e.target.closest('.gv-collapse');
+    if (gco) {   // graph: grup (partition) düğümü collapse/expand (tablo ile AYNI st.collapsed)
+      const stg = secState[gco.dataset.section];
+      if (stg) { stg.collapsed = stg.collapsed || []; const k = gco.dataset.gkey; const ix = stg.collapsed.indexOf(k); if (ix === -1) stg.collapsed.push(k); else stg.collapsed.splice(ix, 1); paint(gco.dataset.section); }
+      for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return;
+    }
     const sg = e.target.closest('.show-graph');
     if (sg) {   // tablo satırı -> graph görünümüne geç + o satırın düğümüne merkezlen
       const nm = sg.dataset.section; const stg = secState[nm];
@@ -3120,9 +3142,14 @@ function getHtml(): string {
       return;
     }
     const gnode = e.target.closest('.gnode');
-    if (gnode) {   // #1 graph düğümü sağ tık: satırı watch ifadesi olarak kopyala (VS Code Watch'a yapıştır)
+    if (gnode) {   // graph düğümü sağ tık
       e.preventDefault();
-      if (gnode.dataset.el) popMenu(name, e, '<div class="cm-item cell-watch" data-el="' + esc(gnode.dataset.el) + '">Copy row as watch expression</div>');
+      if (gnode.dataset.gkey != null) {   // grup (partition) düğümü: collapse / expand
+        const collapsed = gnode.classList.contains('gv-collapsed');
+        popMenu(name, e, '<div class="cm-item gv-collapse" data-section="' + esc(name) + '" data-gkey="' + esc(gnode.dataset.gkey) + '">' + (collapsed ? 'Expand group' : 'Collapse group') + '</div>');
+      } else if (gnode.dataset.el) {   // üye düğüm: satırı watch ifadesi olarak kopyala
+        popMenu(name, e, '<div class="cm-item cell-watch" data-el="' + esc(gnode.dataset.el) + '">Copy row as watch expression</div>');
+      }
       return;
     }
     const td = e.target.closest('tbody td');

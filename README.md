@@ -59,7 +59,7 @@ Toggle any section to an interactive **node graph**. Linked lists and arrays flo
   on top, members beneath); arrays as a card grid. Cards show the title, fields, state
   colour and usage bar, and **size their width to the section's content** (compact for
   short values, wider for long ones, uniform within a section). **Hover** highlights a node's neighbours, **click** opens a
-  details panel, **drag a node** to reposition it (the placement is remembered and
+  details panel (decodes `badge`/`valueMap`/`flags` text and colours like the cards, with the raw integer in parentheses, and grows/wraps so nothing is cut), **drag a node** to reposition it (the placement is remembered and
   follows the row across refreshes), **drag the background** to pan, **scroll** to zoom,
   and **⤢ Fit** to recentre. When a section has cross-references, a **⇄ Links** toggle
   overlays purple links to the linked rows in other sections (deduplicated; click a
@@ -68,7 +68,7 @@ Toggle any section to an interactive **node graph**. Linked lists and arrays flo
   with Enter / Shift+Enter to cycle — and a **◉ Map** minimap helps you navigate large
   graphs (its shape tracks the graph's aspect ratio, so a tall graph gets a tall map and a
   wide one a short map). Grouped sections pack their groups into a balanced grid; **drag a group's header**
-  to move the whole block. Cards show **all** of a section's visible fields. **Right-click a
+  to move the whole block, or **right-click a group → Collapse group** to fold its members away (shares the table's collapse state). Cards show **all** of a section's visible fields. **Right-click a
   node** to copy it as a watch expression. The **⇄ Links** layer shows both outgoing and
   **incoming** cross-section links (e.g. which mutexes own a thread). `tree` sections render
   as a hierarchical tree with edges running from each parent's bottom into each child's top.

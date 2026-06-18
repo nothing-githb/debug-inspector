@@ -2,6 +2,17 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.67.0] - 2026-06-16
+
+### Added
+- **Collapse a group from the graph view.** Right-click a group ("partition") node → **Collapse
+  group** to fold its member nodes away (the header stays, marked ▸); right-click again to expand.
+  It shares the table's collapse state, so a group folded in one view is folded in the other.
+- **Richer node details panel.** Clicking a node now decodes its values the same way the cards do —
+  `badge` / `valueMap` / `flags` text and colours — and shows the raw integer in parentheses next
+  to a converted value (e.g. `RUN (1)`, `BUSY OWNED (3)`). The panel grows and wraps so values are
+  no longer cut off.
+
 ## [0.66.0] - 2026-06-16
 
 ### Added
