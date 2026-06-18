@@ -1729,6 +1729,20 @@ function getHtml(): string {
     if(d.residual) parts.push('+0x'+d.residual.toString(16));
     return parts.join(' ');
   }
+  // graph kartı için flag'leri RENKLİ <tspan>'lar olarak çiz (her flag kendi rengiyle); maxc karakter bütçesi -> flag sınırında … ile kısalt
+  function flagsTspans(map, raw, maxc){
+    var d=flagDecode(map, raw); if(!d) return null;
+    var spans='', used=0, first=true, trunc=false;
+    for(var i=0;i<d.items.length;i++){
+      var it=d.items[i], piece=(first?'':' ')+it.text;
+      if(!first && used+piece.length>maxc){ trunc=true; break; }
+      spans += '<tspan'+(it.hex?' fill="'+it.hex+'"':'')+'>'+esc(piece)+'</tspan>';
+      used+=piece.length; first=false;
+    }
+    if(!trunc && d.residual){ var rp=(first?'':' ')+'+0x'+d.residual.toString(16); if(first||used+rp.length<=maxc){ spans+='<tspan fill="#8a8a8a">'+esc(rp)+'</tspan>'; } else trunc=true; }
+    if(trunc) spans+='<tspan fill="#8a8a8a">…</tspan>';
+    return spans;
+  }
 
   // Erişilemeyen (gdb hata/erişim yok) veya NULL pointer (0x0) -> "-"
   function isUnreadable(v) {
@@ -2413,13 +2427,17 @@ function getHtml(): string {
     var fy = 34;
     cols.slice(1).forEach(function (c) {
       s += '<text class="flab" x="14" y="' + fy + '">' + esc(c) + '</text>';
-      var fvm = valueMapEntry(valueMap[c], row[c], shortVal(row[c]));   // config-driven değer eşlemesi (metin + renk)
-      var fft = flags[c] ? flagsText(flags[c], row[c]) : null;   // bayrak alanı: set bitlerin isimleri (birleşik)
-      var fvText = (fft != null) ? fft : (fvm ? fvm.text : shortVal(row[c]));
-      var fvFill = (fft == null && fvm && fvm.hex) ? ' fill="' + fvm.hex + '"' : '';
       // değer etiketle çakışmasın: karta sığmayan uzun değer (çok flag'li alan gibi) … ile kısaltılır (tam değer tablo görünümünde)
       var _avail = n.w - 12 - 14 - (String(c).length * 6) - 8, _maxc = Math.max(3, Math.floor(_avail / 6));
-      if (String(fvText).length > _maxc) fvText = String(fvText).slice(0, _maxc - 1) + '…';
+      var ffx = flags[c] ? flagsTspans(flags[c], row[c], _maxc) : null;   // bayrak alanı: her flag RENKLİ tspan (renk verilmişse)
+      var fvm = (ffx == null) ? valueMapEntry(valueMap[c], row[c], shortVal(row[c])) : null;   // valueMap (expr) rengi de fval'a uygulanır
+      var fvText = fvm ? fvm.text : shortVal(row[c]);
+      var fvFill = (fvm && fvm.hex) ? ' fill="' + fvm.hex + '"' : '';
+      if (ffx == null && String(fvText).length > _maxc) fvText = String(fvText).slice(0, _maxc - 1) + '…';
+      // fval öğesi: flag alanında renkli tspan'lar, aksi halde (varsa valueMap rengiyle) düz metin
+      var fvalEl = (ffx != null)
+        ? '<text class="fval" x="' + (n.w - 12) + '" y="' + fy + '" text-anchor="end">' + ffx + '</text>'
+        : '<text class="fval"' + fvFill + ' x="' + (n.w - 12) + '" y="' + fy + '" text-anchor="end">' + esc(fvText) + '</text>';
       if (bars[c]) {
         var used = toIntVal(row[c]), mxv = toIntVal(row['__bar__' + c]);
         if (used !== null && mxv !== null && mxv > 0) {
@@ -2429,10 +2447,10 @@ function getHtml(): string {
           s += '<rect class="gbarfill" x="' + bx2 + '" y="' + (fy - 8) + '" width="' + (bw * pct).toFixed(1) + '" height="7" rx="3.5" fill="' + bc + '"></rect>';
           s += '<text class="gpct" x="' + (n.w - 12) + '" y="' + (fy - 1) + '" text-anchor="end">' + Math.round(pct * 100) + '%</text>';
         } else {
-          s += '<text class="fval"' + fvFill + ' x="' + (n.w - 12) + '" y="' + fy + '" text-anchor="end">' + esc(fvText) + '</text>';
+          s += fvalEl;
         }
       } else {
-        s += '<text class="fval"' + fvFill + ' x="' + (n.w - 12) + '" y="' + fy + '" text-anchor="end">' + esc(fvText) + '</text>';
+        s += fvalEl;
       }
       fy += 16;
     });

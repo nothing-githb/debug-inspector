@@ -407,7 +407,7 @@ Using `${master}` in a section **without** `groupBy` does nothing (there's no ma
 } }
 ```
 
-(e.g. `flags == 0x1B` → **BUSY · OWNED · RECURSIVE · +0x10** — the `0x10` bit isn't mapped, so it's shown as a residual.)
+(e.g. `flags == 0x1B` → **BUSY · OWNED · RECURSIVE · +0x10** — the `0x10` bit isn't mapped, so it's shown as a residual.) On the graph card each flag is drawn in its own colour (uncoloured flags use the default text colour); a value too long for the card is truncated with `…`.
 
 ### Notes on `expr` and rendering
 

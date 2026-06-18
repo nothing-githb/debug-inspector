@@ -2,6 +2,14 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.66.0] - 2026-06-16
+
+### Added
+- **Per-flag colours on graph cards.** When a `flags` field assigns colours, the graph view
+  now draws each set flag in its own colour (uncoloured flags use the default text colour),
+  matching the coloured pills in the table. Value-map (`valueMap`) colours already applied on
+  the card and continue to.
+
 ## [0.65.2] - 2026-06-16
 
 ### Changed

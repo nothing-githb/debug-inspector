@@ -538,7 +538,8 @@ Any `fields` entry can carry these — one example each:
 { "label": "Active", "expr": "active", "valueMap": { "0": "idle", "1": "armed" } }
 
 // Bit flags: decode an integer's bits to names. Key = bit mask (hex 0x04 or dec 4); shows set flags
-// ((val & mask) == mask). Unmapped bits appended as +0x..; value 0 shows 0. Pills in table, joined in graph.
+// ((val & mask) == mask). Unmapped bits appended as +0x..; value 0 shows 0.
+// Colored pills in the table; on the graph card each flag is drawn in its own color.
 { "label": "Flags", "expr": "flags", "flags": { "0x1": { "text": "BUSY", "color": "amber" }, "0x2": "OWNED", "0x4": { "text": "ROBUST", "color": "green" }, "0x8": "RECURSIVE" } }
 ```
 
