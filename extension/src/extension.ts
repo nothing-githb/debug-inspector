@@ -31,6 +31,7 @@ interface SectionCfg {
   wrap?: string;      // elemanı field'a erişmeden ÖNCE sarmala; ${expr}=eleman. Örn "((T*)${expr})" -> ((T*)(elem))->field
   label?: string;     // (master) ağaç düğüm başlığı için ifade; groupBy hedefi bunu kullanır
   groupBy?: string;   // bu bölümü adı verilen master bölüme göre ağaç olarak grupla; root'ta ${master}
+  selectedFrom?: string;   // TALEP-ÜZERİNE DETAY bölümü: adı verilen master bölümün BİR satırı sağ-tıklanıp "Show detailed info" seçilince kurulur. Sekme olarak GÖRÜNMEZ. Bu bölümün ifadelerinde ${selected} = seçilen master satırın kararlı eleman ifadesi (örn callstack: start "${selected}->fp").
   hidden?: boolean;   // bölüm (sekme) başlangıçta gizli (kullanıcı Sections menüsünde seçim yapana kadar)
   max?: number;
   fields: FieldCfg[];
@@ -59,6 +60,9 @@ interface ColPref { order: string[]; hidden: string[]; }
 // ---------------------------------------------------------------------------
 let panel: vscode.WebviewPanel | undefined;
 let lastStopped: { session: vscode.DebugSession; threadId: number; frameId?: number } | undefined;
+// Talep-üzerine açık detaylar (selectedFrom + ${selected}). master satırı sağ-tıklanıp açılınca eklenir;
+// her durakta yeniden çekilir; kapatılınca/panel taşınınca temizlenir. sel = seçilen satırın kararlı eleman ifadesi.
+let openDetails: Array<{ master: string; sel: string; section: string }> = [];
 let printSetupFor: vscode.DebugSession | undefined;   // #3: kompakt print ayarları bu oturumda yapıldı mı
 // Output: config-driven seviyeli logger (debugInspector.logLevel)
 // Seçilebilir seviyeler: off / info / debug. trace -> debug tier, warn/error -> info tier.
@@ -292,6 +296,7 @@ async function runRefresh() {
       const rel = await gdbAcquire();   // hedefli işlemlerle iç içe geçmesin
       try { await refresh(lastStopped.session, lastStopped.threadId, refreshGen); }
       finally { rel(); }
+      await refreshAllDetails();   // açık talep-üzerine detayları da bu durakta tazele (refreshDetail kendi kilidini alır)
     } while (pendingRefresh && !!lastStopped);
   } finally {
     refreshing = false;
@@ -346,6 +351,34 @@ async function refreshTarget(section: string, label?: string) {
     panel.webview.postMessage({ type: 'patchSection', section, sec, ts });
   }
   } finally { rel(); }
+}
+
+// Talep-üzerine DETAY (selectedFrom): seçilen master satırı (sel = kararlı eleman ifadesi) için detay bölümünü kur ve gönder.
+// ${selected} -> (sel) tüm ifadelerde. Sekme akışından bağımsız; kendi GDB kilidini alır (cursor çakışması olmasın).
+async function refreshDetail(d: { master: string; sel: string; section: string }): Promise<void> {
+  if (!panel || !lastStopped) return;
+  const cfg = loadConfig(); if (!cfg) return;
+  const secs = extractSections(cfg);
+  const dNode = secs.find(s => s.name === d.section);
+  if (!dNode || !isDetail(dNode.cfg)) return;
+  const session = lastStopped.session;
+  const frameId = lastStopped.frameId;
+  const subCfg = substituteSelected(dNode.cfg, d.sel);
+  const rel = await gdbAcquire();
+  try {
+    const sec = await buildSection(session, subCfg, frameId, '$rd_' + d.section, d.section);
+    const ts = new Date().toLocaleTimeString();
+    log?.debug(`refreshDetail: "${d.section}" of [${d.sel}] -> ${sec.rows.length} row(s)`);
+    panel.webview.postMessage({ type: 'patchDetail', master: d.master, sel: d.sel, section: d.section, sec, ts });
+  } finally { rel(); }
+}
+// Tüm açık detayları yeniden çek (her durak sonunda, ana yenileme bittikten SONRA). Geçersiz (config'ten kalkmış) olanları ayıkla.
+async function refreshAllDetails(): Promise<void> {
+  if (!openDetails.length || !panel || !lastStopped) return;
+  const cfg = loadConfig();
+  const names = cfg ? new Set(extractSections(cfg).filter(s => isDetail(s.cfg)).map(s => s.name)) : new Set<string>();
+  openDetails = openDetails.filter(d => names.has(d.section));
+  for (const d of openDetails.slice()) await refreshDetail(d);
 }
 
 // Edit value sonrası: SADECE düzenlenen satırı yeniden çek (tüm bölüm/panel değil).
@@ -935,6 +968,26 @@ function selectorExpr(cfg: SectionCfg, index: number): string {
 function isGrouped(cfg: SectionCfg): boolean {
   return typeof cfg.groupBy === 'string' && cfg.groupBy.length > 0;
 }
+// Talep-üzerine detay bölümü mü? (selectedFrom verilmişse sekme DEĞİL; sağ-tık ile bir master satırı için kurulur)
+function isDetail(cfg: SectionCfg): boolean {
+  return typeof cfg.selectedFrom === 'string' && cfg.selectedFrom.length > 0;
+}
+// ${selected} = seçilen master satırın kararlı eleman ifadesi (data-el/__el__). Detay bölümünün TÜM ifadelerinde değiştir.
+function substituteSelected(cfg: SectionCfg, sel: string): SectionCfg {
+  const sub = (s: string | undefined): string | undefined =>
+    s == null ? s : s.split('${selected}').join('(' + sel + ')');
+  return {
+    ...cfg,
+    root: sub(cfg.root) as string,
+    start: sub(cfg.start), next: sub(cfg.next), while: sub(cfg.while),
+    head: sub(cfg.head), nil: sub(cfg.nil), count: sub(cfg.count),
+    wrap: sub(cfg.wrap), cast: cfg.cast,
+    fields: (cfg.fields || []).map(f => ({
+      ...f, expr: sub(f.expr) as string, wrap: sub(f.wrap), when: sub(f.when),
+      bar: typeof f.bar === 'string' ? sub(f.bar) : f.bar
+    }))
+  };
+}
 function substituteMaster(expr: string, sel: string): string {
   return expr.split('${master}').join('(' + sel + ')');
 }
@@ -1052,7 +1105,12 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
     await gdbExec(session, 'set max-value-size unlimited', frameId);
   }
 
-  const secs = extractSections(cfg);
+  const allSecs = extractSections(cfg);
+  // Talep-üzerine detay bölümleri (selectedFrom) SEKME değildir -> yerleşim/akış dışında tutulur.
+  // detailMap: master adı -> bu master'dan açılabilen detay bölüm adları (webview sağ-tık menüsü için).
+  const secs = allSecs.filter(s => !isDetail(s.cfg));
+  const detailMap: Record<string, string[]> = {};
+  for (const s of allSecs) if (isDetail(s.cfg)) { const mn = s.cfg.selectedFrom as string; (detailMap[mn] || (detailMap[mn] = [])).push(s.name); }
   const byName: Record<string, { name: string; cfg: SectionCfg; i: number }> = {};
   secs.forEach((s, i) => { byName[s.name] = { name: s.name, cfg: s.cfg, i }; });
   const lay = resolveLayout(secs);
@@ -1062,7 +1120,7 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
   log?.info(`refresh: ${secs.length} section(s); visible=[${visible.join(', ')}] active=${activeTab ?? '-'}`);
 
   // iskeleti hazırla (ts + layout + kaldırılanları temizle); bölümler aşağıda ÖNCELİKLİ akışla gelir
-  panel.webview.postMessage({ type: 'beginUpdate', order, visible, hiddenSections: order.filter(n => hiddenSet.has(n)), ts });
+  panel.webview.postMessage({ type: 'beginUpdate', order, visible, hiddenSections: order.filter(n => hiddenSet.has(n)), details: detailMap, ts });
   sendWatchpoints();   // webview izlenen hücreleri ★ ile işaretlesin (yenileme sonrası da korunur)
 
   // master cache (grouped bölümlerin bağımlılığı); görünür bir master kurulunca hemen gönderilir
@@ -1111,12 +1169,25 @@ function openPanel(context: vscode.ExtensionContext) {
     'debugInspector', 'Debug Inspector', vscode.ViewColumn.Beside,
     { enableScripts: true, retainContextWhenHidden: true }
   );
-  panel.onDidDispose(() => { panel = undefined; }, null, context.subscriptions);
+  panel.onDidDispose(() => { panel = undefined; openDetails = []; }, null, context.subscriptions);
   panel.webview.onDidReceiveMessage(
     async (msg: any) => {
       if (msg?.type === 'refresh') { log?.debug('webview: manual refresh'); doRefresh(); return; }
-      if (msg?.type === 'ready') { log?.debug('webview: ready (load/move) — resend data if stopped'); if (lastStopped) doRefresh(); return; }
+      if (msg?.type === 'ready') { log?.debug('webview: ready (load/move) — resend data if stopped'); openDetails = []; if (lastStopped) doRefresh(); return; }
       if (msg?.type === 'openConfig') { log?.debug('webview: open config'); vscode.commands.executeCommand('debugInspector.openConfig'); return; }
+      if (msg?.type === 'openDetail' && typeof msg.master === 'string' && typeof msg.sel === 'string' && typeof msg.section === 'string') {
+        // master satırı sağ-tık -> "Show detailed info": detayı kaydet (her durakta tazelenecek) + hemen bir kez çek
+        if (!openDetails.some(d => d.master === msg.master && d.sel === msg.sel && d.section === msg.section))
+          openDetails.push({ master: msg.master, sel: msg.sel, section: msg.section });
+        log?.info(`detail open: "${msg.section}" of [${msg.sel}] (from ${msg.master})`);
+        void refreshDetail({ master: msg.master, sel: msg.sel, section: msg.section });
+        return;
+      }
+      if (msg?.type === 'closeDetail' && typeof msg.master === 'string' && typeof msg.sel === 'string' && typeof msg.section === 'string') {
+        openDetails = openDetails.filter(d => !(d.master === msg.master && d.sel === msg.sel && d.section === msg.section));
+        log?.debug(`detail close: "${msg.section}" of [${msg.sel}]`);
+        return;
+      }
       if (msg?.type === 'activeTab') { if (typeof msg.section === 'string') activeTab = msg.section; return; }
       if (msg?.type === 'setColumns' && typeof msg.section === 'string' && msg.section) {
         log?.debug(`webview: setColumns ${msg.section} hidden=[${(msg.hidden || []).join(', ')}] refetch=${!!msg.refetch}`);
@@ -1502,6 +1573,21 @@ function getHtml(): string {
   .gv-detail .close:hover { opacity: 1; }
   .gv-banner { font-size: 11px; opacity: 0.7; margin: 6px 2px; }
   .gv-empty { opacity: 0.55; padding: 28px 4px; font-size: 13px; }
+  /* graph paneli detay gösterirken yana genişler (sub-table sığsın) */
+  .gv-detail.gv-detail-wide { max-width: min(560px, calc(100% - 24px)); }
+
+  /* ---- Talep-üzerine detay (selectedFrom + \${selected}) ---- */
+  .detrow > td { padding: 0 !important; background: var(--vscode-editorWidget-background, rgba(128,128,128,0.06)); }
+  .det-wrap { padding: 6px 10px 9px 22px; border-left: 3px solid var(--vscode-focusBorder, #3b9eff); }
+  .det-head { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0 6px; }
+  .det-head b { font-weight: 600; }
+  .det-cnt { opacity: 0.6; font-size: 11px; }
+  .det-x { cursor: pointer; opacity: 0.55; margin-left: auto; padding: 0 4px; }
+  .det-x:hover { opacity: 1; }
+  .det-wrap table { width: 100%; }
+  .det-load, .det-empty { opacity: 0.6; font-size: 12px; padding: 4px 0; }
+  .det-ingraph { padding: 4px 0 0; border-left: 0; }
+  .det-ingraph table { font-size: 11px; }
 
   /* ---- Graph Phase 3: search / minimap / level-of-detail ---- */
   .gv-search {
@@ -1565,6 +1651,9 @@ function getHtml(): string {
   let watchedExprs = new Set();   // watchpoint kurulu l-value ifadeleri (★ + menüde Add/Remove)
   let hiddenSections = [];   // gizli sekme adları (Sections menüsünden açılabilir)
   let sectionOrder = [];     // TEK interleaved sıra (görünür+gizli), gerçek konumda
+  let detailDefs = {};       // master adı -> [detay bölüm adı]; sağ-tık "Show detailed info" menüsü için (beginUpdate ile gelir)
+  let openDet = [];          // açık talep-üzerine detaylar: [{master, sel, detail, sec}] (sel = seçilen satırın kararlı eleman ifadesi)
+  function findDet(master, sel, detail) { return openDet.find(function (d) { return d.master === master && d.sel === sel && d.detail === detail; }); }
   let activeName = null;
 
   let refreshFallback = null;
@@ -2676,7 +2765,9 @@ function getHtml(): string {
       selectNode(gid);
     });
     var dc = document.getElementById('gdc-' + idx);
-    if (dc) dc.addEventListener('click', function (e) { e.stopPropagation(); st.gv.sel = null; det.style.display = 'none'; clearFocus(); vp.querySelectorAll('.gnode.sel').forEach(function (g) { g.classList.remove('sel'); }); });
+    if (dc) dc.addEventListener('click', function (e) { e.stopPropagation();
+      if (det.getAttribute('data-detname')) closeDetailEntry(det.getAttribute('data-detmaster'), det.getAttribute('data-detsel'), det.getAttribute('data-detname'));   // detay gösteriyorsa onu da kapat
+      st.gv.sel = null; det.style.display = 'none'; det.classList.remove('gv-detail-wide'); clearFocus(); vp.querySelectorAll('.gnode.sel').forEach(function (g) { g.classList.remove('sel'); }); });
     svg.addEventListener('wheel', function (e) {
       e.preventDefault();
       var f = e.deltaY < 0 ? 1.1 : 1 / 1.1, ns = Math.min(3, Math.max(0.25, st.gv.sc * f));
@@ -2765,6 +2856,93 @@ function getHtml(): string {
     if (st.gv.q) { if (sBox) sBox.value = st.gv.q; applySearch(); } else syncMini();   // refresh sonrası arama/minimap durumunu geri uygula
   }
 
+  // --- Talep-üzerine detay (selectedFrom + \${selected}) yerleşimi ---
+  function paneOf(name) { const i = currentNames.indexOf(name); return i < 0 ? null : panesEl.querySelector('.pane[data-idx="' + i + '"]'); }
+  function detCount(sec) { if (!sec) return ''; return sec.grouped ? (sec.groups || []).reduce(function (a, g) { return a + (g.rows || []).length; }, 0) : (sec.rows || []).length; }
+  // detay bölümünü mini bir tablo olarak çiz (master sütun tercihleri/sıralama YOK; kendi base/valueMap/flags'i uygulanır)
+  function detSubTable(sec) {
+    if (!sec) return '<div class="det-load">Loading…</div>';
+    const cols = (sec.columnsAll || []).filter(function (l) { return (sec.hidden || []).indexOf(l) === -1; });
+    const rows = sec.grouped ? (sec.groups || []).reduce(function (a, g) { return a.concat(g.rows || []); }, []) : (sec.rows || []);
+    if (!rows.length) return '<div class="det-empty">(no rows)</div>';
+    const colBase = {};
+    if (sec.bases) for (const k in sec.bases) colBase[k] = sec.bases[k];   // config sayı tabanını (örn PC/FP hex) uygula
+    const opts = { numCols: numericCols(cols, rows), colBase: colBase, bars: sec.bars || {}, links: {}, badges: sec.badges || {}, valueMap: sec.valueMap || {}, flags: sec.flags || {}, sortCol: null };
+    return buildTable(cols, rows, null, 'asc', null, opts);
+  }
+  function detInner(d) {
+    const head = '<div class="det-head"><span class="det-x" title="Hide">✕</span><b>' + esc(cap(d.detail)) + '</b> <span class="det-cnt">' + detCount(d.sec) + '</span></div>';
+    return head + detSubTable(d.sec);
+  }
+  // TABLO: master satırının HEMEN ALTINA accordion satırı ekle/güncelle (alta doğru genişler)
+  function placeDetailTable(d) {
+    const pane = paneOf(d.master); if (!pane) return;
+    const trs = pane.querySelectorAll('tbody tr[data-el]');
+    let host = null;
+    for (let i = 0; i < trs.length; i++) { if (trs[i].getAttribute('data-el') === d.sel) { host = trs[i]; break; } }
+    if (!host) return;
+    let row = host.nextElementSibling;
+    while (row && row.classList && row.classList.contains('detrow')) {
+      if (row.getAttribute('data-detail') === d.detail) break;
+      row = row.nextElementSibling;
+    }
+    const span = host.children.length || 1;
+    const inner = '<td colspan="' + span + '"><div class="det-wrap">' + detInner(d) + '</div></td>';
+    if (row && row.classList && row.classList.contains('detrow') && row.getAttribute('data-detail') === d.detail) {
+      row.innerHTML = inner;
+    } else {
+      const tr = document.createElement('tr');
+      tr.className = 'detrow';
+      tr.setAttribute('data-detail', d.detail);
+      tr.setAttribute('data-master', d.master);
+      tr.setAttribute('data-sel', d.sel);   // setAttribute ham saklar (esc gerekmez) -> kapatmada doğrudan okunur
+      tr.innerHTML = inner;
+      host.parentNode.insertBefore(tr, host.nextElementSibling);
+    }
+  }
+  // GRAPH: sağ-tık -> detay panelini aç + genişlet (sub-table panelin içinde)
+  function placeDetailGraph(d) {
+    const pane = paneOf(d.master); if (!pane) return;
+    const det = pane.querySelector('.gv-detail'); if (!det) return;
+    const title = det.querySelector('h3'); const body = det.querySelector('[id^="gdb-"]');
+    if (!title || !body) return;
+    const c = detCount(d.sec);
+    title.textContent = cap(d.detail) + (c !== '' ? ' (' + c + ')' : '');
+    body.innerHTML = '<div class="det-wrap det-ingraph">' + detSubTable(d.sec) + '</div>';
+    det.classList.add('gv-detail-wide');
+    det.setAttribute('data-detmaster', d.master); det.setAttribute('data-detsel', d.sel); det.setAttribute('data-detname', d.detail);
+    det.style.display = 'block';
+  }
+  function placeDetail(d) { const st = secState[d.master]; if (!st) return; if (st.view === 'graph') placeDetailGraph(d); else placeDetailTable(d); }
+  // sağ-tık menüsü: bu master'dan (sel = seçilen satır) açılabilen detaylar için Show/Hide öğeleri
+  function detMenu(master, sel) {
+    const list = detailDefs[master]; if (!list || !list.length || !sel) return '';
+    let h = '';
+    for (let i = 0; i < list.length; i++) {
+      const dn = list[i]; const open = !!findDet(master, sel, dn);
+      h += '<div class="cm-item ' + (open ? 'det-hide' : 'det-show') + '" data-section="' + esc(master) + '" data-detail="' + esc(dn) + '" data-el="' + esc(sel) + '">' + (open ? 'Hide ' : 'Show ') + esc(cap(dn)) + ' (detail)</div>';
+    }
+    return h;
+  }
+  // bir bölüm boyandıktan SONRA o master'ın tüm açık detaylarını yeniden yerleştir (tablo yeniden kurulduğu için)
+  function applyDetails(master) { for (let i = 0; i < openDet.length; i++) if (openDet[i].master === master) placeDetail(openDet[i]); }
+  function removeDetailDom(master, sel, detail) {
+    const pane = paneOf(master); if (!pane) return;
+    const rows = pane.querySelectorAll('tr.detrow');
+    for (let i = 0; i < rows.length; i++) if (rows[i].getAttribute('data-sel') === sel && rows[i].getAttribute('data-detail') === detail) rows[i].remove();
+    const det = pane.querySelector('.gv-detail');
+    if (det && det.getAttribute('data-detsel') === sel && det.getAttribute('data-detname') === detail) {
+      det.style.display = 'none'; det.classList.remove('gv-detail-wide');
+      det.removeAttribute('data-detmaster'); det.removeAttribute('data-detsel'); det.removeAttribute('data-detname');
+      const b = det.querySelector('[id^="gdb-"]'); if (b) b.innerHTML = '';
+    }
+  }
+  function closeDetailEntry(master, sel, detail) {
+    openDet = openDet.filter(function (x) { return !(x.master === master && x.sel === sel && x.detail === detail); });
+    vscodeApi.postMessage({ type: 'closeDetail', master: master, sel: sel, section: detail });
+    removeDetailDom(master, sel, detail);
+  }
+
   // henüz verisi gelmemiş (streaming sırasında sırada bekleyen / yeni gösterilen) bölüm için yer tutucu
   function paintLoading(name) {
     const body = bodyEl(name);
@@ -2781,7 +2959,7 @@ function getHtml(): string {
       body.innerHTML = '<div class="empty">Master section for "' + esc(name) + '" is empty or missing.</div>';
       return;
     }
-    if (st.view === 'graph') { renderGraph(name); return; }
+    if (st.view === 'graph') { renderGraph(name); applyDetails(name); return; }
     const cols = displayCols(st);
     const grouped = st.sec.grouped;
     const allRows = grouped ? st.sec.groups.reduce((a, g) => a.concat(g.rows), []) : st.sec.rows;
@@ -2800,6 +2978,7 @@ function getHtml(): string {
     }
     body.innerHTML = summary + bar + table;
     applyFilter(name);   // korunan filtre/changed-only'i taze DOM'a uygula
+    applyDetails(name);  // master satırların altındaki açık talep-üzerine detayları yeniden ekle (tablo yeniden kuruldu)
   }
 
   function buildColsMenu(name) {
@@ -2904,6 +3083,25 @@ function getHtml(): string {
     if (cc) { vscodeApi.postMessage({ type: 'copy', text: cc.dataset.text || '' }); for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return; }
     const cw = e.target.closest('.cell-watch');
     if (cw) { vscodeApi.postMessage({ type: 'copyWatch', text: cw.dataset.el || '' }); for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return; }
+    const dsh = e.target.closest('.det-show');
+    if (dsh) {   // talep-üzerine detay aç: kaydet + uzantıdan çek + anlık "Loading…"
+      const mn = dsh.dataset.section, sel = dsh.dataset.el, dn = dsh.dataset.detail;
+      if (!findDet(mn, sel, dn)) openDet.push({ master: mn, sel: sel, detail: dn, sec: null });
+      vscodeApi.postMessage({ type: 'openDetail', master: mn, sel: sel, section: dn });
+      placeDetail(findDet(mn, sel, dn));
+      for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return;
+    }
+    const dhi = e.target.closest('.det-hide');
+    if (dhi) {   // menüden gizle
+      closeDetailEntry(dhi.dataset.section, dhi.dataset.el, dhi.dataset.detail);
+      for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return;
+    }
+    const dx = e.target.closest('.det-x');
+    if (dx) {   // detay başlığındaki ✕ (tablo accordion içinde)
+      const tr = dx.closest('.detrow');
+      if (tr) closeDetailEntry(tr.getAttribute('data-master'), tr.getAttribute('data-sel'), tr.getAttribute('data-detail'));
+      e.stopPropagation(); return;
+    }
     const gco = e.target.closest('.gv-collapse');
     if (gco) {   // graph: grup (partition) düğümü collapse/expand (tablo ile AYNI st.collapsed)
       const stg = secState[gco.dataset.section];
@@ -3176,8 +3374,8 @@ function getHtml(): string {
       if (gnode.dataset.gkey != null) {   // grup (partition) düğümü: collapse / expand
         const collapsed = gnode.classList.contains('gv-collapsed');
         popMenu(name, e, '<div class="cm-item gv-collapse" data-section="' + esc(name) + '" data-gkey="' + esc(gnode.dataset.gkey) + '">' + (collapsed ? 'Expand group' : 'Collapse group') + '</div>');
-      } else if (gnode.dataset.el) {   // üye düğüm: satırı watch ifadesi olarak kopyala
-        popMenu(name, e, '<div class="cm-item cell-watch" data-el="' + esc(gnode.dataset.el) + '">Copy row as watch expression</div>');
+      } else if (gnode.dataset.el) {   // üye düğüm: satırı watch ifadesi olarak kopyala (+ talep-üzerine detay)
+        popMenu(name, e, '<div class="cm-item cell-watch" data-el="' + esc(gnode.dataset.el) + '">Copy row as watch expression</div>' + detMenu(name, gnode.dataset.el));
       }
       return;
     }
@@ -3187,10 +3385,12 @@ function getHtml(): string {
       const txt = (td.textContent || '').trim();
       let h = '<div class="cm-item cell-copy" data-text="' + esc(txt) + '">Copy cell</div>';
       const trEl = td.closest('tr');
+      const inDet = !!(trEl && trEl.closest('.detrow'));   // detay alt-tablosu içindeyse master detay öğeleri gösterme (nested olmasın)
       if (trEl && trEl.dataset.ri != null && trEl.dataset.ri !== '')   // bu satırı GRAPH görünümünde göster + o düğüme merkezlen
         h += '<div class="cm-item show-graph" data-section="' + esc(name) + '" data-ri="' + esc(trEl.dataset.ri) + '">Show in graph</div>';
       if (trEl && trEl.dataset.el)   // satırın kararlı eleman ifadesini watch için kopyala (VS Code Watch'a yapıştır)
         h += '<div class="cm-item cell-watch" data-el="' + esc(trEl.dataset.el) + '">Copy row as watch expression</div>';
+      if (!inDet && trEl && trEl.dataset.el) h += detMenu(name, trEl.dataset.el);   // talep-üzerine detay (Show/Hide)
       if (td.dataset.lv) {   // bu hücrenin alanına GDB watchpoint'i (değer değişince durdurur)
         if (watchedExprs.has(td.dataset.lv))
           h += '<div class="cm-item cell-unwp" data-lv="' + esc(td.dataset.lv) + '">Remove watchpoint</div>';
@@ -3430,6 +3630,7 @@ function getHtml(): string {
       const vis = Array.isArray(m.visible) ? m.visible : [];
       hiddenSections = Array.isArray(m.hiddenSections) ? m.hiddenSections : [];
       sectionOrder = Array.isArray(m.order) ? m.order.slice() : vis.concat(hiddenSections);
+      detailDefs = (m.details && typeof m.details === 'object') ? m.details : {};   // master -> [detay bölüm adı] (sağ-tık menüsü)
       ensureLayout(vis);
       for (const k of Object.keys(secState)) if (vis.indexOf(k) === -1) delete secState[k];
       // henüz çekilmemiş (verisi olmayan) görünür bölümler "Loading…" göstersin (streaming kuyruğunda bekleyenler)
@@ -3447,6 +3648,11 @@ function getHtml(): string {
       // tek bölüm: durak akışındaki bir bölüm VEYA hedefli reveal -> bu sekme dolar/çizilir
       if (m.sec) { renderSection(m.section, m.sec); paint(m.section); buildColsMenu(m.section); recomputeChanged(); }
       setTabUpdating(m.section, false);   // bu sekme güncellendi -> spinner dursun
+      if (m.ts) tsEl.textContent = 'updated ' + m.ts;
+    } else if (m.type === 'patchDetail') {
+      // talep-üzerine detay verisi geldi: ilgili açık girişe yaz + yerleştir (tablo accordion / graph paneli)
+      const od = findDet(m.master, m.sel, m.section);
+      if (od) { od.sec = m.sec; placeDetail(od); }
       if (m.ts) tsEl.textContent = 'updated ' + m.ts;
     } else if (m.type === 'presentationUpdate') {
       // config'te yalnız sunum değişti (base/bar eşiği/link/badge) -> GDB'siz: mevcut satırları koru, yeniden çiz

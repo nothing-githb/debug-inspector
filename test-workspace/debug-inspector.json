@@ -160,10 +160,11 @@
     ]
   },
 
-  "//callstack": "walk modu: koşullu geri-sarma (FP-zinciri). start=başlangıç FP; next=${expr}(kürsör=FP) -> [FP]'deki önceki FP; while=FP stack sınırında kaldıkça sür; PC=[FP+8] (x86-64 dönüş adresi). Sentetik veri: g_cs_thread + g_cs_stack.",
+  "//callstack": "TALEP-ÜZERİNE DETAY (selectedFrom + ${selected}) + walk modu. SEKME DEĞİL: 'threads' tablosunda/graph'ında bir thread satırını sağ-tıklayıp 'Show Callstack (detail)' seçilince kurulur (tabloda satırın altına açılır; graph'ta detay paneli genişler). Her durakta tazelenir. start=seçilen thread'in FP'si (${selected}->cs_fp); next=[FP]'deki önceki FP; while=FP stack sınırında kaldıkça sür; PC=[FP+8] (x86-64 dönüş adresi). Sentetik veri: tcb_t.cs_fp + g_cs_stack (her thread'e farklı zincir).",
   "callstack": {
     "mode": "walk",
-    "start": "g_cs_thread.fp",
+    "selectedFrom": "threads",
+    "start": "${selected}->cs_fp",
     "next":  "*(unsigned long *)(${expr})",
     "while": "(${expr}) >= g_cs_thread.stack_base && (${expr}) < g_cs_thread.stack_top",
     "max": 64,

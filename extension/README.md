@@ -41,6 +41,11 @@ Toggle any section to an interactive **node graph**. Linked lists and arrays flo
   collapsible tree grouped under a master section (`groupBy` + `${master}`) — e.g.
   every process's semaphores under its process node — all at once, with a
   flat-view toggle and a one-click **Collapse all / Expand all** control.
+- **On-demand detail.** For data worth seeing one element at a time (a thread's
+  call stack, a node's sub-list), mark a section `selectedFrom` a master and
+  right-click a row/node → **Show … (detail)**. `${selected}` scopes it to that
+  element; it expands inline below the row (table) or in the graph detail panel,
+  and refreshes on every stop while open. Pairs with `walk` for call stacks.
 - **Graph view.** Toggle any section to an interactive node graph with **◉ Graph**
   (and back with **▤ Table**). Linked/index lists flow as a **serpentine grid** along
   their `next` relationship; grouped sections as **per-group swimlane columns** (label
@@ -118,6 +123,7 @@ The config file (default `debug-inspector.json`) is a JSON object that is a **ma
 | `wrap`    | all                         | Template that transforms the **element** before field access; `${expr}` is the element. |
 | `label`   | master sections             | Expression evaluated on the master element to title each tree node when another section groups by this one. |
 | `groupBy` | grouping sections           | Names a master section; renders this section as a collapsible tree, one group per master element (use `${master}` in `root`/`head`/`count`/`nil`). |
+| `selectedFrom` | detail sections        | Names a master section; makes this an **on-demand detail** — *not* a tab. Right-click a master row/node → **Show … (detail)** to build it for that one element. `${selected}` (in `root`/`start`/`next`/`while`/fields) is the selected element's stable expression. |
 | `hidden`  | all                         | `true` starts this section's tab hidden (until shown from the ▤ Sections menu). Ignored once you change section visibility in the UI. |
 | `max`     | all                         | Traversal upper bound / safety guard (default `1024`). |
 | `fields`  | all *(required)*            | Ordered list of `{ "label", "expr" }` columns (first column = row identity). `expr` is appended after the element, OR a computed expression via `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed/unfetched), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator = variant/tagged‑union), `"editable": true` (right‑click → Edit value writes via GDB `set var`), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value), and/or `"badge": { "<value>": "<color>" }` (value→color badge, overriding the built-in `State` coloring). |
@@ -249,6 +255,31 @@ A **computed walk** for sequences that aren't a plain array or `next`-pointer li
 
 `${expr}` is the cursor value (an address), so you do the pointer arithmetic yourself — this works for a frame-pointer chain (above), an SP scan, or any "advance until out of bounds" traversal. It's read-only (no edit/watch on computed frames).
 
+### On-demand detail (`selectedFrom` + `${selected}`)
+
+Some data is only worth seeing for **one** element at a time — a thread's call stack, a connection's packet ring, a node's sub-list. Mark such a section with `selectedFrom: "<master>"` and it becomes an **on-demand detail** rather than a tab: nothing is fetched until you **right-click a row (table) or node (graph)** of the master section and choose **Show … (detail)**. `${selected}` then resolves to that row's stable element expression, and the detail is (re)fetched on every stop **while it's open** (close it from the **✕** in its header). In the table it expands as an accordion **right below the selected row**; in the graph the detail panel opens and widens to hold it.
+
+This pairs naturally with `walk` — the call-stack example above, scoped to the thread you click:
+
+```json
+{
+  "callstack": {
+    "mode": "walk",
+    "selectedFrom": "threads",                                          // not a tab; right-click a thread → Show Callstack
+    "start": "${selected}->cs_fp",                                      // the selected thread's saved frame pointer
+    "next":  "*(unsigned long *)(${expr})",
+    "while": "(${expr}) >= g_stack_base && (${expr}) < g_stack_top",
+    "max":   64,
+    "fields": [
+      { "label": "PC", "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },
+      { "label": "FP", "expr": "${expr}", "base": "hex" }
+    ]
+  }
+}
+```
+
+`selectedFrom` is independent of the master's mode (array, linked list, grouped tree…) — the right-clicked element's stable expression is what `${selected}` substitutes. A master may have more than one detail (each gets its own menu item).
+
 ### Grouping / tree (`groupBy` + `${master}`)
 
 Set `groupBy` to a master section's name to render this section in its own tab as a **collapsible tree** showing **all** master elements at once. `${master}` is replaced with each master's processed element. Node titles come from the master's `label` (here, `processes` sets `"label": "name"`). A **Flat view** toggle switches between the tree and one ungrouped table.
@@ -365,6 +396,8 @@ Any `fields` entry can carry extra options beyond `label`/`expr`. One example ea
 ```
 
 Using `${master}` in a section **without** `groupBy` does nothing (there's no master) — the extension leaves it unresolved (the cell errors) and shows a warning prompting you to add `groupBy` or remove `${master}`.
+
+**Selected element** (`${selected}`) — in a section with `selectedFrom`, `${selected}` is the stable expression of the master row/node you right-clicked to open the detail. It substitutes in `root`/`start`/`next`/`while` and field `expr`/`wrap`/`when`, so the detail traverses *from* that element (e.g. `"start": "${selected}->cs_fp"`). See [On-demand detail](#on-demand-detail-selectedfrom--selected).
 
 **Number base** (`base`) — default display base `dec` / `hex` / `bin` (also toggle live from the `10 / 16 / 2` button in the column header):
 

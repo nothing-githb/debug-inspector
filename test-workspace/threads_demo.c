@@ -19,6 +19,7 @@ typedef struct tcb {
     void           *stack_base;   /* stack start */
     unsigned long   stack_size;   /* toplam (bytes) */
     unsigned long   stack_used;   /* kullanilan (bytes) -> usage bar */
+    unsigned long   cs_fp;        /* sentetik x86-64 frame-pointer (callstack 'walk' detayi icin) -> ${selected}->cs_fp */
     struct tcb     *next;
 } tcb_t;
 
@@ -157,6 +158,7 @@ static tcb_t *mk_thread(int id, const char *name, thread_state_t st, int prio)
     t->id = id; t->name = name; t->state = st; t->prio = prio;
     t->stack_base = (void *)(unsigned long long)(0x7000000ULL + (unsigned long long)id * 0x10000ULL);
     t->stack_size = 0x4000UL; /* 16 KB */
+    t->cs_fp = 0UL;            /* varsayilan: callstack yok (init'te bazi thread'lere zincir atanir) */
     t->next = NULL;
     return t;
 }
@@ -316,16 +318,35 @@ int main(void)
         for (int i = 0; i < 7; i++) g_tree_root = bst_insert(g_tree_root, bk[i], bl[i]);
     }
 
-    /* sentetik callstack: 4 cerceveli FP zinciri (x86-64: [fp]=onceki fp, [fp+8]=donus adresi) */
+    /* sentetik callstack'ler: g_cs_stack icinde BIRDEN COK bagimsiz FP zinciri (x86-64: [fp]=onceki fp, [fp+8]=donus adresi).
+       Her thread'e farkli bir baslangic fp atanir -> bir thread'i sag-tiklayip "Show callstack" dedigimizde O thread'in zinciri unwind edilir.
+       Geri-sarma sinirlari TUM zincirler icin ortak (hepsi g_cs_stack icinde): g_cs_thread.stack_base/stack_top. */
     {
         unsigned long *s = g_cs_stack;
-        s[4]  = (unsigned long)&s[8];   s[5]  = 0x401111UL;   /* frame #0 (en icteki) */
-        s[8]  = (unsigned long)&s[12];  s[9]  = 0x402222UL;   /* frame #1 */
-        s[12] = (unsigned long)&s[16];  s[13] = 0x403333UL;   /* frame #2 */
-        s[16] = 0UL;                    s[17] = 0x404444UL;   /* frame #3; next fp=0 -> sinir disi -> dur */
+        /* zincir A (4 cerceve): s[4]->s[8]->s[12]->s[16]->0 */
+        s[4]  = (unsigned long)&s[8];   s[5]  = 0x401111UL;
+        s[8]  = (unsigned long)&s[12];  s[9]  = 0x402222UL;
+        s[12] = (unsigned long)&s[16];  s[13] = 0x403333UL;
+        s[16] = 0UL;                    s[17] = 0x404444UL;   /* next fp=0 -> sinir disi -> dur */
+        /* zincir B (2 cerceve): s[24]->s[28]->0 */
+        s[24] = (unsigned long)&s[28];  s[25] = 0x40AA11UL;
+        s[28] = 0UL;                    s[29] = 0x40BB22UL;
+        /* zincir C (3 cerceve): s[36]->s[40]->s[44]->0 */
+        s[36] = (unsigned long)&s[40];  s[37] = 0x40C111UL;
+        s[40] = (unsigned long)&s[44];  s[41] = 0x40C222UL;
+        s[44] = 0UL;                    s[45] = 0x40C333UL;
         g_cs_thread.stack_base = (unsigned long)&s[0];
         g_cs_thread.stack_top  = (unsigned long)&s[64];
-        g_cs_thread.fp         = (unsigned long)&s[4];
+        g_cs_thread.fp         = (unsigned long)&s[4];        /* (geriye-uyum: bagimsiz g_cs_thread.fp hala zincir A) */
+        /* thread'lere zincir ata: ID dongusel olarak A/B/C, dorduncu yok (callstack bos) */
+        for (int i = 0; i < g_thread_count; i++) {
+            switch (i & 3) {
+                case 0: g_threads[i].cs_fp = (unsigned long)&s[4];  break;   /* zincir A */
+                case 1: g_threads[i].cs_fp = (unsigned long)&s[24]; break;   /* zincir B */
+                case 2: g_threads[i].cs_fp = (unsigned long)&s[36]; break;   /* zincir C */
+                default: g_threads[i].cs_fp = 0UL;                  break;   /* callstack yok */
+            }
+        }
     }
 
     for (int tick = 0; tick < 3; tick++) {

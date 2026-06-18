@@ -201,6 +201,9 @@ Every field, across all modes:
 | `wrap`    | all | — | Template that transforms the **element** before field access; `${expr}` = the element. |
 | `label`   | master sections | row key | Expression titling each tree node when another section groups by this one. |
 | `groupBy` | grouping sections | — | Name of a master section; renders this section as a tree in its own tab. Use `${master}` in `root`. |
+| `selectedFrom` | detail sections | — | Name of a master section; makes this an **on-demand detail** (not a tab). Right-click a master row/node → **Show … (detail)** to build it for that one element; `${selected}` (in `root`/`start`/`next`/`while`/fields) is the selected element's stable expression. |
+| `start`   | walk | — | Initial cursor (address/value). `${expr}` in `next`/`while`/fields is the current cursor. |
+| `while`   | walk | — | Boolean `${expr}` template; the walk continues while true and stops when false. |
 | `hidden`  | all | `false` | Start this section's tab hidden (until you show it from the ▤ Sections menu). Ignored once you change section visibility in the UI. |
 | `max`     | all | `1024` | Traversal upper bound (array loop cap; cycle/length guard for the lists). |
 
@@ -374,6 +377,22 @@ arithmetic. Read-only.
 
 ---
 
+### On-demand detail (`selectedFrom` + `${selected}`)
+
+Data worth seeing for **one** element at a time — a thread's call stack, a node's
+sub-list — should be a **detail**, not a tab. Give the section `selectedFrom:
+"<master>"`; nothing is fetched until you **right-click a master row (table) or
+node (graph)** and choose **Show … (detail)**. `${selected}` resolves to that
+element's stable expression, and the detail is re-fetched on every stop **while
+it's open** (close it from the **✕** in its header). In the table it expands as an
+accordion **right below the selected row**; in the graph the detail panel opens and
+widens to hold it. It pairs with `walk` for a per-thread call stack — the example
+above, but `"selectedFrom": "threads"` and `"start": "${selected}->cs_fp"`, so
+right-clicking a thread unwinds *its* stack. Independent of the master's mode; a
+master may expose more than one detail.
+
+---
+
 ### Grouping / tree (`groupBy` + `${master}`)
 
 Relate one section to another: set `groupBy` to a master section's name and use
@@ -532,6 +551,10 @@ Any `fields` entry can carry these — one example each:
 // Master element: in a grouped section (groupBy), ${master} = the master this row belongs to.
 // Works in expr/wrap/when (you write the access). Standalone. Used in a non-grouped section -> warning.
 { "label": "Proc", "expr": "${master}->name" }
+
+// Selected element: in a detail section (selectedFrom), ${selected} = the right-clicked master
+// element's stable expression. Substitutes in root/start/next/while + expr/wrap/when. Standalone.
+{ "label": "FP", "expr": "${selected}->cs_fp", "base": "hex" }
 
 // Number base: dec / hex / bin default (also a 10/16/2 toggle in the column header)
 { "label": "Handle", "expr": "id", "base": "hex" }

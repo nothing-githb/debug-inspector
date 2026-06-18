@@ -2,6 +2,22 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.69.0] - 2026-06-18
+
+### Added
+- **On-demand detail sections (`selectedFrom` + `${selected}`).** A section that sets
+  `selectedFrom: "<master>"` is no longer a tab — it is a **detail** built only when you
+  **right-click a master row (table) or node (graph)** and choose **Show … (detail)**.
+  `${selected}` resolves to the right-clicked element's stable expression (in
+  `root`/`start`/`next`/`while` and field `expr`/`wrap`/`when`), and the detail is re-fetched
+  on every stop **while it stays open** (close it from the **✕** in its header). In the table
+  it expands as an accordion **directly below the selected row**; in the graph the detail
+  panel opens and widens to hold a sub-table. A master may expose more than one detail.
+- This pairs with `walk` for the canonical case: the demo's `callstack` is now
+  `"selectedFrom": "threads"` with `"start": "${selected}->cs_fp"`, so right-clicking a thread
+  unwinds **that thread's** frame-pointer chain. The demo gains a per-thread `cs_fp` and three
+  independent synthetic chains in `g_cs_stack` (chain A / B / C), assigned round-robin to threads.
+
 ## [0.68.0] - 2026-06-16
 
 ### Added
