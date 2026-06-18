@@ -215,6 +215,13 @@ static bnode_t *bst_insert(bnode_t *root, int key, const char *label)
     return root;
 }
 
+/* ---- sentetik x86-64 frame-pointer zinciri ('walk' modu / callstack demosu) ----
+   x86-64 cercevesi: [RBP] = bir onceki RBP, [RBP+8] = donus adresi.
+   Geri-sarma: fp = thread.fp; her adimda pc = *(fp+8), fp = *fp; fp stack sinirinda kaldikca surer. */
+typedef struct { unsigned long stack_base, stack_top, fp; } fake_cs_thread_t;
+static unsigned long g_cs_stack[64];
+fake_cs_thread_t g_cs_thread;
+
 /* Breakpoint'i buraya koy. printf yerine gozlemlenebilir bir yan etki. */
 static volatile unsigned g_sink;
 static void inspect_point(int tick)
@@ -307,6 +314,18 @@ int main(void)
         const char *bl[7] = { "root", "l", "r", "ll", "lr", "rl", "rr" };
         g_tree_root = NULL;
         for (int i = 0; i < 7; i++) g_tree_root = bst_insert(g_tree_root, bk[i], bl[i]);
+    }
+
+    /* sentetik callstack: 4 cerceveli FP zinciri (x86-64: [fp]=onceki fp, [fp+8]=donus adresi) */
+    {
+        unsigned long *s = g_cs_stack;
+        s[4]  = (unsigned long)&s[8];   s[5]  = 0x401111UL;   /* frame #0 (en icteki) */
+        s[8]  = (unsigned long)&s[12];  s[9]  = 0x402222UL;   /* frame #1 */
+        s[12] = (unsigned long)&s[16];  s[13] = 0x403333UL;   /* frame #2 */
+        s[16] = 0UL;                    s[17] = 0x404444UL;   /* frame #3; next fp=0 -> sinir disi -> dur */
+        g_cs_thread.stack_base = (unsigned long)&s[0];
+        g_cs_thread.stack_top  = (unsigned long)&s[64];
+        g_cs_thread.fp         = (unsigned long)&s[4];
     }
 
     for (int tick = 0; tick < 3; tick++) {

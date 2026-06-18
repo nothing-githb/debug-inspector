@@ -2,6 +2,17 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.68.0] - 2026-06-16
+
+### Added
+- **`walk` traversal mode — a condition-bounded cursor unwind.** For sequences that aren't a
+  plain array or `next`-pointer list — the classic case is a **call stack** unwound by frame
+  pointers. A cursor starts at `start`; each step reads fields with `${expr}` = the current
+  cursor, then `next` (a `${expr}` template) computes the next cursor; it continues **while**
+  a boolean `${expr}` predicate (`while`) is true and stops when it goes false (plus `max` and
+  a no-progress/cycle guard). Read-only. The demo gains a synthetic x86-64 frame-pointer chain
+  (`g_cs_thread` / `g_cs_stack`) and a `callstack` section using it.
+
 ## [0.67.0] - 2026-06-16
 
 ### Added

@@ -17,10 +17,12 @@ interface FieldCfg {
   flags?: Record<string, string | { text?: string; color?: string }>;  // BAYRAK alanı: anahtar = bit MASKESİ (hex 0x04 veya dec 4); integer değerin set olan bitleri çözülüp isimleri gösterilir ((val & mask) == mask). Düz string = isim; {text,color} ile renk. Eşlenmeyen kalan bitler sonda +0x.. olarak gösterilir.
 }
 interface SectionCfg {
-  mode: 'linked_list' | 'array' | 'index_list' | 'tree';
+  mode: 'linked_list' | 'array' | 'index_list' | 'tree' | 'walk';
   root: string;
   children?: string[];   // tree: çocuk pointer alan adları (örn ["left","right"]); varsayılan ["left","right"]
-  next?: string;      // linked_list: sonraki node pointer alanı | index_list: sonraki index alanı
+  next?: string;      // linked_list: sonraki node pointer alanı | index_list: sonraki index alanı | walk: ${expr} (kürsör) -> sonraki kürsör (örn "*(unsigned long*)(${expr})")
+  start?: string;     // walk: başlangıç kürsörü (adres/değer ifadesi; root yoksa bunu kullanır)
+  while?: string;     // walk: devam KOŞULU (boolean ${expr} şablonu); false olunca durur (örn sınır içinde kalma)
   head?: string;      // index_list: başlangıç index ifadesi
   nil?: string;       // index_list: gezinmeyi bitiren index (varsayılan "-1")
   count?: string;     // array
@@ -675,6 +677,32 @@ async function collectSection(
       log.trace(`tree "${name}" node ${myIdx} (parent ${node.parent}): ${node.expr} = ${curRaw}`);
     }
     log.debug(`tree "${name}": ${rows.length} node(s); stopped: ${reason}`);
+  } else if (cfg.mode === 'walk') {
+    // KOŞULLU geri-sarma (örn. FP-zinciri callstack): kürsör 'start'tan başlar; 'while' (boolean ${expr}) doğru
+    // oldukça satır üretir; 'next' (${expr} -> sonraki kürsör) ile ilerler. ${expr} = o anki kürsör DEĞERİ (adres).
+    const startExpr = cfg.start ?? cfg.root;
+    const subC = (tpl: string, cur: string): string => tpl.split('${expr}').join('(' + cur + ')');
+    const badCur = (v: string): boolean => isNull(v) || /^<<error|no symbol|cannot access memory|<error reading|value (has been )?optimized out/i.test(v);
+    let cur = cleanValue(await gdbExec(session, `print ${startExpr}`, frameId));
+    const seenW: Record<string, boolean> = {};
+    let guard = 0, reason = 'end';
+    log.debug(`walk "${name}": start(${startExpr})="${cur}", next=${cfg.next}, while=${cfg.while}`);
+    while (true) {
+      if (isStale && isStale()) { reason = 'stale (resumed/superseded)'; break; }
+      if (guard++ >= max) { reason = `max bound (${max})`; break; }
+      if (badCur(cur)) { reason = 'unreadable/NULL cursor'; break; }
+      if (cfg.while && !condTrue(cleanValue(await gdbExec(session, `print ${subC(cfg.while, cur)}`, frameId)))) { reason = 'while=false (out of bounds)'; break; }
+      if (seenW[cur]) { reason = `cycle (cursor ${cur} repeats)`; break; }
+      seenW[cur] = true;
+      // satır: alanlar ${expr}=kürsör ile (collectRowFields ${expr}'i çözer; eleman = kürsör değeri, salt-okunur)
+      rows.push(await collectRowFields(session, cfg.fields, frameId, cur, cur, '.'));
+      if (!cfg.next) { reason = 'no next'; break; }
+      const nxw = cleanValue(await gdbExec(session, `print ${subC(cfg.next, cur)}`, frameId));
+      log.trace(`walk "${name}" frame ${guard - 1}: cursor=${cur} → next [ ${subC(cfg.next, cur)} ] = "${nxw}"`);
+      if (nxw === cur) { reason = 'no progress'; break; }
+      cur = nxw;
+    }
+    log.debug(`walk "${name}": ${rows.length} frame(s); stopped: ${reason}`);
   } else {
     log.debug(`linked_list "${name}": root=${cfg.root}, advance via cursor->${cfg.next}, access="->"`);
     let guard = 0;
@@ -979,6 +1007,7 @@ function dataSig(cfg: SectionCfg): string {
   return JSON.stringify({
     mode: cfg.mode, root: cfg.root, next: cfg.next, head: cfg.head, nil: cfg.nil,
     count: cfg.count, access: cfg.access, cast: cfg.cast, wrap: cfg.wrap,
+    start: cfg.start, while: cfg.while,
     groupBy: cfg.groupBy, max: cfg.max, label: cfg.label,
     fields: (cfg.fields || []).map(f => ({ l: f.label, e: f.expr, w: f.wrap, wn: f.when, bm: barMax(f.bar), ed: !!f.editable, h: !!f.hidden }))
   });

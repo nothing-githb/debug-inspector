@@ -158,5 +158,18 @@
       { "label": "ID",   "expr": "id" },
       { "label": "Name", "expr": "name" }
     ]
+  },
+
+  "//callstack": "walk modu: koşullu geri-sarma (FP-zinciri). start=başlangıç FP; next=${expr}(kürsör=FP) -> [FP]'deki önceki FP; while=FP stack sınırında kaldıkça sür; PC=[FP+8] (x86-64 dönüş adresi). Sentetik veri: g_cs_thread + g_cs_stack.",
+  "callstack": {
+    "mode": "walk",
+    "start": "g_cs_thread.fp",
+    "next":  "*(unsigned long *)(${expr})",
+    "while": "(${expr}) >= g_cs_thread.stack_base && (${expr}) < g_cs_thread.stack_top",
+    "max": 64,
+    "fields": [
+      { "label": "PC", "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },
+      { "label": "FP", "expr": "${expr}", "base": "hex" }
+    ]
   }
 }

@@ -188,7 +188,7 @@ Every field, across all modes:
 
 | Field     | Modes | Default | Meaning |
 |-----------|-------|---------|---------|
-| `mode`    | all | — (required) | `"linked_list"`, `"array"`, `"index_list"`, or `"tree"`. Selects the traversal. |
+| `mode`    | all | — (required) | `"linked_list"`, `"array"`, `"index_list"`, `"tree"`, or `"walk"`. Selects the traversal. |
 | `root`    | all | — (required) | Starting expression in your program's own syntax (head pointer, array, buffer, or tree root). May contain `${master}` (grouping). |
 | `children`| tree | `["left","right"]` | Child-pointer field names followed from each node (BFS). The graph view lays the result out as a hierarchical tree. |
 | `fields`  | all | — (required) | Ordered list of `{ "label", "expr" }` columns. `label` is the header (and first column = row identity); `expr` is the accessor appended after the element, OR a computed expression using `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (render as a usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference — jump to the target row whose `match` column equals this value; `match` defaults to the target's first column), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator make a variant/tagged‑union), `"editable": true` (right‑click → **Edit value…** writes via GDB `set var`; assignable fields only), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value, e.g. `expr:"data"` + `wrap:"((widget_t *)${expr})->x"`), and/or `"badge": { "<value>": "<color>" }` (value→color badge — names like `green`/`red`/`amber`/`cyan` or `#rrggbb` — overriding the built‑in `State` coloring), and/or `"valueMap": { "<value>": "<text>" \| { "text", "color" } }` (render a value as custom **text + color** — the text‑changing superset of `badge`; applies in the table cell and the graph card). |
@@ -348,6 +348,29 @@ top); the table view lists the nodes.
 has (e.g. `["first_child","next_sibling"]` for an n-ary tree). Each is followed
 from every node; an again-visited guard keeps the walk finite, and unreadable or
 NULL children stop that branch.
+
+**`walk`** — a **condition-bounded cursor unwind** for sequences that aren't a
+plain array or `next`-pointer list (classic case: a **call stack** unwound by
+frame pointers). A cursor starts at `start`; each step reads fields with
+`${expr}` = the current cursor, then `next` (a `${expr}` template) computes the
+next cursor; it continues **while `while` (a boolean `${expr}` template) is true**
+(plus `max` and a no-progress/cycle guard). Terminates on a **predicate**, not a
+sentinel/count. `${expr}` is the cursor value (an address) — you do the pointer
+arithmetic. Read-only.
+
+```jsonc
+"callstack": {
+  "mode": "walk",
+  "start": "thread->fp",                                   // initial cursor (saved frame pointer)
+  "next":  "*(unsigned long *)(${expr})",                  // next FP = saved previous FP at [FP]
+  "while": "(${expr}) >= thread->stack_base && (${expr}) < thread->stack_top",
+  "max":   64,
+  "fields": [
+    { "label": "PC", "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },  // return addr at [FP+8] (x86-64)
+    { "label": "FP", "expr": "${expr}", "base": "hex" }
+  ]
+}
+```
 
 ---
 

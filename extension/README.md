@@ -104,10 +104,12 @@ The config file (default `debug-inspector.json`) is a JSON object that is a **ma
 
 | Field     | Modes                       | Meaning |
 |-----------|-----------------------------|---------|
-| `mode`    | all *(required)*            | `"linked_list"`, `"array"`, `"index_list"`, or `"tree"`. |
-| `root`    | all *(required)*            | Starting expression in your program's own syntax (head pointer, array, or tree root). May contain `${master}` (grouping). |
+| `mode`    | all *(required)*            | `"linked_list"`, `"array"`, `"index_list"`, `"tree"`, or `"walk"`. |
+| `root`    | most *(required)*           | Starting expression in your program's own syntax (head pointer, array, or tree root). May contain `${master}` (grouping). For `walk`, use `start` instead. |
 | `children`| tree                        | Child-pointer field names walked from each node (BFS); defaults to `["left","right"]`. The graph view draws the result as a hierarchical tree. |
-| `next`    | linked_list, index_list     | Field giving the next element — a **pointer** (`cursor->next`) for linked_list, an **index** for index_list. For index_list it may instead be a `${expr}` **template** (like `wrap`) that computes the next index, e.g. `"${expr}.link.idx"`. Used verbatim, so set it (it only falls back to `next` when building a master's clickable/grouped selector). |
+| `start`   | walk                        | Initial cursor (an address/value expression). `${expr}` in `next`/`while`/fields is the current cursor. |
+| `while`   | walk                        | Boolean `${expr}` template; the walk continues while it's true and stops when false (e.g. cursor within stack bounds). |
+| `next`    | linked_list, index_list, walk | Field giving the next element — a **pointer** (`cursor->next`) for linked_list, an **index** for index_list. For index_list/`walk` it may instead be a `${expr}` **template** (like `wrap`) that computes the next index/cursor, e.g. `"${expr}.link.idx"` or `"*(unsigned long *)(${expr})"`. Used verbatim, so set it (it only falls back to `next` when building a master's clickable/grouped selector). |
 | `head`    | index_list                  | Starting **index** expression. May contain `${master}` (grouping). |
 | `nil`     | index_list                  | Sentinel index that ends the walk (default `-1`). May contain `${master}` (grouping). |
 | `count`   | array                       | Expression yielding the element count (parsed as an integer). May contain `${master}` (grouping). |
@@ -224,6 +226,28 @@ Walk a tree from `root`, following each node's **child pointers**. `children` li
 ```
 
 `children` is not limited to two — list as many child-pointer fields as your node has (e.g. `["first_child","next_sibling"]` for an n-ary tree, or `["lo","mid","hi"]`). Each named field is followed from every node; a cycle/again-visited guard keeps the walk finite, and unreadable or NULL children simply stop that branch.
+
+### Mode 5 — `walk` (condition-bounded cursor unwind)
+
+A **computed walk** for sequences that aren't a plain array or `next`-pointer list — the classic case is a **call stack** unwound by following frame pointers. A *cursor* starts at `start`, and at each step the row's fields are read with **`${expr}` = the current cursor value**, then `next` (a `${expr}` template) computes the next cursor; the walk continues **while `while` (a boolean `${expr}` template) is true** and stops when it goes false (plus a `max` cap and a no-progress/cycle guard). Unlike the other modes it terminates on a **predicate**, not a sentinel or a count.
+
+```json
+{
+  "callstack": {
+    "mode": "walk",
+    "start": "thread->fp",                                              // initial cursor (a saved frame pointer / address)
+    "next":  "*(unsigned long *)(${expr})",                             // next cursor = the saved previous FP at [FP]
+    "while": "(${expr}) >= thread->stack_base && (${expr}) < thread->stack_top",  // keep going while the FP stays in the stack
+    "max":   64,
+    "fields": [
+      { "label": "PC", "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },  // return address at [FP+8] (x86-64)
+      { "label": "FP", "expr": "${expr}", "base": "hex" }
+    ]
+  }
+}
+```
+
+`${expr}` is the cursor value (an address), so you do the pointer arithmetic yourself — this works for a frame-pointer chain (above), an SP scan, or any "advance until out of bounds" traversal. It's read-only (no edit/watch on computed frames).
 
 ### Grouping / tree (`groupBy` + `${master}`)
 
