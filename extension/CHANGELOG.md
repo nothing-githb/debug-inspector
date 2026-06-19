@@ -2,6 +2,19 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.70.1] - 2026-06-19
+
+### Testing
+- No functional change. Hardened the pre-release regression suite so **every feature is verified on
+  each release**. After a coverage audit mapped each feature to its tests, the gaps were closed:
+  index_list head→next-index chasing (unit + a new end-to-end GDB gate step), `${wrapped_expr}` and the
+  section/field `wrap` construction, `${selected}`/`substituteSelected` (substitutes everywhere except
+  `cast`), `${master}` misuse detection, `when`/`condTrue` blanking, `flags` colored pills + residual,
+  the grouped Flat-view toggle, the full on-demand-detail wiring (`selectedFrom`/detail menu/accordion/
+  graph panel/refresh-while-open), the `symbol` field, Config-open, graph partition collapse, the
+  decoded node-detail panel, per-flag graph colors, panel-move persistence, and column reorder. The
+  webview suite grew 177→201 assertions, the parser/keyword suite +24, edit +1, and the gate to 13 steps.
+
 ## [0.70.0] - 2026-06-19
 
 ### Added
