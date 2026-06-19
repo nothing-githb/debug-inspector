@@ -2,6 +2,25 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.70.0] - 2026-06-19
+
+### Added
+- **Symbol resolution field option (`"symbol": true`).** Mark a field whose value is a **code
+  address** and the extension reads it with GDB `print/a`, showing the resolved
+  **`function+offset`** instead of the raw number (an unresolved address stays as the address).
+  The canonical use is turning a call-stack PC into a function name, but it works for any address
+  field. Read-only (no `base`/edit/watchpoint on a symbolized field). The demo's synthetic
+  call-stack frames now carry **real function addresses** (`mk_thread`, `mk_sem`, `bst_insert`, …),
+  and the `callstack` detail gains a `Func` column resolving each PC to its function.
+
+### Docs
+- Added screenshots of the on-demand detail (table accordion + graph panel) to the READMEs.
+- Corrected several stale schema/feature statements surfaced by a pre-release docs audit: the mode
+  count is now **five** (walk was missing), the `root`/`next`/`wrap` schema rows now reflect `walk`
+  (walk uses `start`, consumes `next`, and ignores `wrap`), and the `${selected}` substitution scope
+  is documented in full (`root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` + field
+  `expr`/`wrap`/`when`/`bar`, everything except `cast`).
+
 ## [0.69.0] - 2026-06-18
 
 ### Added

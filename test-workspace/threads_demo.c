@@ -323,18 +323,20 @@ int main(void)
        Geri-sarma sinirlari TUM zincirler icin ortak (hepsi g_cs_stack icinde): g_cs_thread.stack_base/stack_top. */
     {
         unsigned long *s = g_cs_stack;
+        /* Donus adresleri (PC'ler) GERCEK fonksiyon adresleridir -> 'symbol' alani / 'print/a' ile
+           hangi fonksiyona denk geldikleri cozulur (mk_thread, mk_sem, ...). */
         /* zincir A (4 cerceve): s[4]->s[8]->s[12]->s[16]->0 */
-        s[4]  = (unsigned long)&s[8];   s[5]  = 0x401111UL;
-        s[8]  = (unsigned long)&s[12];  s[9]  = 0x402222UL;
-        s[12] = (unsigned long)&s[16];  s[13] = 0x403333UL;
-        s[16] = 0UL;                    s[17] = 0x404444UL;   /* next fp=0 -> sinir disi -> dur */
+        s[4]  = (unsigned long)&s[8];   s[5]  = (unsigned long)&mk_thread;
+        s[8]  = (unsigned long)&s[12];  s[9]  = (unsigned long)&mk_sem;
+        s[12] = (unsigned long)&s[16];  s[13] = (unsigned long)&bst_insert;
+        s[16] = 0UL;                    s[17] = (unsigned long)&main;   /* next fp=0 -> sinir disi -> dur */
         /* zincir B (2 cerceve): s[24]->s[28]->0 */
-        s[24] = (unsigned long)&s[28];  s[25] = 0x40AA11UL;
-        s[28] = 0UL;                    s[29] = 0x40BB22UL;
+        s[24] = (unsigned long)&s[28];  s[25] = (unsigned long)&inspect_point;
+        s[28] = 0UL;                    s[29] = (unsigned long)&mk_mutex;
         /* zincir C (3 cerceve): s[36]->s[40]->s[44]->0 */
-        s[36] = (unsigned long)&s[40];  s[37] = 0x40C111UL;
-        s[40] = (unsigned long)&s[44];  s[41] = 0x40C222UL;
-        s[44] = 0UL;                    s[45] = 0x40C333UL;
+        s[36] = (unsigned long)&s[40];  s[37] = (unsigned long)&bst_insert;
+        s[40] = (unsigned long)&s[44];  s[41] = (unsigned long)&mk_timer;
+        s[44] = 0UL;                    s[45] = (unsigned long)&mk_proc;
         g_cs_thread.stack_base = (unsigned long)&s[0];
         g_cs_thread.stack_top  = (unsigned long)&s[64];
         g_cs_thread.fp         = (unsigned long)&s[4];        /* (geriye-uyum: bagimsiz g_cs_thread.fp hala zincir A) */

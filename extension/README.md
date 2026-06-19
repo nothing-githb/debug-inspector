@@ -23,7 +23,7 @@ Toggle any section to an interactive **node graph**. Linked lists and arrays flo
 ## Features
 
 - **Config-driven, zero code changes.** Describe each structure in JSON; the extension assumes no layout and needs no instrumentation in your program.
-- **Four traversal modes.** `linked_list` (follow a `next` pointer until NULL), `array` (iterate `count` elements), `index_list` (a list stored inside an array, linked by a next-*index* field, walking from `head` to `nil`; unused slots are skipped), and `tree` (walk a tree from `root` by its child pointers — `"children": ["left","right"]` by default — rendered as a hierarchical tree in the graph view).
+- **Five traversal modes.** `linked_list` (follow a `next` pointer until NULL), `array` (iterate `count` elements), `index_list` (a list stored inside an array, linked by a next-*index* field, walking from `head` to `nil`; unused slots are skipped), `tree` (walk a tree from `root` by its child pointers — `"children": ["left","right"]` by default — rendered as a hierarchical tree in the graph view), and `walk` (a condition-bounded cursor unwind — the classic case being a call stack unwound by frame pointers — starting at `start` and continuing while a `while` predicate is true).
 - **Arbitrary root expressions.** `root` is passed to GDB verbatim, so anything valid works: `head`, `g_sys.thread_list`, `g_kernel.pools[0]->thread_list`.
 - **Live updates.** The panel refreshes on every stop and shows a `running…` badge while the program runs; a status pill reads `stopped` / `running…` / `paused`, plus an `updated <time>` timestamp. The panel **closes automatically when the debug session ends**.
 - **Prioritized streaming refresh.** On each stop the **active tab is fetched and shown first**, then the other visible sections stream in **in the background**. **Switching tabs re-prioritizes** — the tab you open jumps the queue and is fetched next — so large workspaces stay responsive. Sections still in the queue (and newly revealed ones) show a **“Loading…”** placeholder until their data arrives, and **each tab shows a spinning ⟳** while its section is still being fetched — so you can watch sections update one by one. The Refresh button reflects the overall state.
@@ -120,13 +120,13 @@ The config file (default `debug-inspector.json`) is a JSON object that is a **ma
 | `count`   | array                       | Expression yielding the element count (parsed as an integer). May contain `${master}` (grouping). |
 | `access`  | array, index_list           | Element-to-field accessor: `"."` (default) or `"->"` for a pointer element. (linked_list is always `->`.) |
 | `cast`    | array, index_list           | Cast applied to `root` to reinterpret a generic/`void*` buffer — **written in full** (e.g. `widget_t *`); no `*` is auto-added. |
-| `wrap`    | all                         | Template that transforms the **element** before field access; `${expr}` is the element. |
+| `wrap`    | all except walk             | Template that transforms the **element** before field access; `${expr}` is the element. In `walk`, `wrap` is ignored — `${expr}` is the cursor value used verbatim; put any transform in the `next`/`while`/field templates. |
 | `label`   | master sections             | Expression evaluated on the master element to title each tree node when another section groups by this one. |
 | `groupBy` | grouping sections           | Names a master section; renders this section as a collapsible tree, one group per master element (use `${master}` in `root`/`head`/`count`/`nil`). |
-| `selectedFrom` | detail sections        | Names a master section; makes this an **on-demand detail** — *not* a tab. Right-click a master row/node → **Show … (detail)** to build it for that one element. `${selected}` (in `root`/`start`/`next`/`while`/fields) is the selected element's stable expression. |
+| `selectedFrom` | detail sections        | Names a master section; makes this an **on-demand detail** — *not* a tab. Right-click a master row/node → **Show … (detail)** to build it for that one element. `${selected}` (in this section's traversal expressions — `root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` — and in any field `expr`/`wrap`/`when`/`bar`; *not* `cast`) is the selected element's stable expression. |
 | `hidden`  | all                         | `true` starts this section's tab hidden (until shown from the ▤ Sections menu). Ignored once you change section visibility in the UI. |
 | `max`     | all                         | Traversal upper bound / safety guard (default `1024`). |
-| `fields`  | all *(required)*            | Ordered list of `{ "label", "expr" }` columns (first column = row identity). `expr` is appended after the element, OR a computed expression via `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed/unfetched), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator = variant/tagged‑union), `"editable": true` (right‑click → Edit value writes via GDB `set var`), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value), and/or `"badge": { "<value>": "<color>" }` (value→color badge, overriding the built-in `State` coloring). |
+| `fields`  | all *(required)*            | Ordered list of `{ "label", "expr" }` columns (first column = row identity). `expr` is appended after the element, OR a computed expression via `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed/unfetched), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator = variant/tagged‑union), `"editable": true` (right‑click → Edit value writes via GDB `set var`), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value), `"badge": { "<value>": "<color>" }` (value→color badge, overriding the built-in `State` coloring), `"valueMap": { "<value>": "<text>"\|{text,color} }` (render a value as custom **text + color** — the text-changing superset of `badge`), `"flags": { "<mask>": "<name>"\|{text,color} }` (decode a bit-flag integer to named flags by mask), and/or `"symbol": true` (treat the value as a **code address** and show its function symbol via GDB `print/a` — e.g. a callstack PC → function name; unresolved addresses stay as the raw address). |
 
 #### Notes on the subtle fields
 
@@ -259,6 +259,10 @@ A **computed walk** for sequences that aren't a plain array or `next`-pointer li
 
 Some data is only worth seeing for **one** element at a time — a thread's call stack, a connection's packet ring, a node's sub-list. Mark such a section with `selectedFrom: "<master>"` and it becomes an **on-demand detail** rather than a tab: nothing is fetched until you **right-click a row (table) or node (graph)** of the master section and choose **Show … (detail)**. `${selected}` then resolves to that row's stable element expression, and the detail is (re)fetched on every stop **while it's open** (close it from the **✕** in its header). In the table it expands as an accordion **right below the selected row**; in the graph the detail panel opens and widens to hold it.
 
+![On-demand detail — a thread's call stack expanded inline below its row](https://raw.githubusercontent.com/nothing-githb/debug-inspector/master/extension/images/detail-callstack.png)
+
+![On-demand detail in the graph view — the detail panel holds the call stack](https://raw.githubusercontent.com/nothing-githb/debug-inspector/master/extension/images/detail-callstack-graph.png)
+
 This pairs naturally with `walk` — the call-stack example above, scoped to the thread you click:
 
 ```json
@@ -271,8 +275,9 @@ This pairs naturally with `walk` — the call-stack example above, scoped to the
     "while": "(${expr}) >= g_stack_base && (${expr}) < g_stack_top",
     "max":   64,
     "fields": [
-      { "label": "PC", "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },
-      { "label": "FP", "expr": "${expr}", "base": "hex" }
+      { "label": "PC",   "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },
+      { "label": "Func", "expr": "*(unsigned long *)((${expr}) + 8)", "symbol": true },  // PC → function name (print/a)
+      { "label": "FP",   "expr": "${expr}", "base": "hex" }
     ]
   }
 }
@@ -397,7 +402,13 @@ Any `fields` entry can carry extra options beyond `label`/`expr`. One example ea
 
 Using `${master}` in a section **without** `groupBy` does nothing (there's no master) — the extension leaves it unresolved (the cell errors) and shows a warning prompting you to add `groupBy` or remove `${master}`.
 
-**Selected element** (`${selected}`) — in a section with `selectedFrom`, `${selected}` is the stable expression of the master row/node you right-clicked to open the detail. It substitutes in `root`/`start`/`next`/`while` and field `expr`/`wrap`/`when`, so the detail traverses *from* that element (e.g. `"start": "${selected}->cs_fp"`). See [On-demand detail](#on-demand-detail-selectedfrom--selected).
+**Selected element** (`${selected}`) — in a section with `selectedFrom`, `${selected}` is the stable expression of the master row/node you right-clicked to open the detail. It substitutes in `root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` and field `expr`/`wrap`/`when`/`bar` (everywhere except `cast`), so the detail traverses *from* that element (e.g. `"start": "${selected}->cs_fp"`). See [On-demand detail](#on-demand-detail-selectedfrom--selected).
+
+**Symbol resolution** (`symbol`) — set `"symbol": true` on a field whose value is a **code address**, and the extension reads it with GDB `print/a` and shows the resolved **`function+offset`** instead of the raw number (an unresolved address stays as the address). The canonical use is turning a call-stack PC into a function name; it works for any address field. Read-only (no `base`/edit/watchpoint on a symbolized field):
+
+```json
+{ "label": "Func", "expr": "*(unsigned long *)((${expr}) + 8)", "symbol": true }
+```
 
 **Number base** (`base`) — default display base `dec` / `hex` / `bin` (also toggle live from the `10 / 16 / 2` button in the column header):
 

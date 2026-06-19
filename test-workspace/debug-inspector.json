@@ -160,8 +160,8 @@
     ]
   },
 
-  "//callstack": "TALEP-ÜZERİNE DETAY (selectedFrom + ${selected}) + walk modu. SEKME DEĞİL: 'threads' tablosunda/graph'ında bir thread satırını sağ-tıklayıp 'Show Callstack (detail)' seçilince kurulur (tabloda satırın altına açılır; graph'ta detay paneli genişler). Her durakta tazelenir. start=seçilen thread'in FP'si (${selected}->cs_fp); next=[FP]'deki önceki FP; while=FP stack sınırında kaldıkça sür; PC=[FP+8] (x86-64 dönüş adresi). Sentetik veri: tcb_t.cs_fp + g_cs_stack (her thread'e farklı zincir).",
-  "callstack": {
+  "//callstack": "TALEP-ÜZERİNE DETAY (selectedFrom + ${selected}) + walk modu. SEKME DEĞİL: 'threads' tablosunda/graph'ında bir thread satırını sağ-tıklayıp 'Show Callstack (detail)' seçilince kurulur (tabloda satırın altına açılır; graph'ta detay paneli genişler). Her durakta tazelenir. start=seçilen thread'in FP'si (${selected}->cs_fp); next=[FP]'deki önceki FP; while=FP stack sınırında kaldıkça sür; PC=[FP+8] (x86-64 dönüş adresi). 'Func' kolonu PC'yi 'symbol':true ile çözer (print/a -> hangi fonksiyon). Sentetik veri: tcb_t.cs_fp + g_cs_stack, dönüş adresleri GERÇEK fonksiyon adresleri (her thread'e farklı zincir).",
+  "ss": {
     "mode": "walk",
     "selectedFrom": "threads",
     "start": "${selected}->cs_fp",
@@ -169,8 +169,9 @@
     "while": "(${expr}) >= g_cs_thread.stack_base && (${expr}) < g_cs_thread.stack_top",
     "max": 64,
     "fields": [
-      { "label": "PC", "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },
-      { "label": "FP", "expr": "${expr}", "base": "hex" }
+      { "label": "PC",   "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },
+      { "label": "Func", "expr": "*(unsigned long *)((${expr}) + 8)", "symbol": true },
+      { "label": "FP",   "expr": "${expr}", "base": "hex" }
     ]
   }
 }

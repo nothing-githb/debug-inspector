@@ -15,6 +15,7 @@ interface FieldCfg {
   badge?: Record<string, string>;  // değer -> renk rozet eşlemesi (case-insensitive tam eşleşme); renk adı (green/blue/red/amber/purple/cyan/gray) veya #rrggbb. Verilirse built-in State/Discipline heuristic'i yerine bu kullanılır.
   valueMap?: Record<string, string | { text?: string; color?: string }>;  // değer -> görüntü. Düz string verilirse görüntülenecek METİN; {text,color} ile metin ve/veya renk. color: renk adı veya #rrggbb. badge'den farkı: badge yalnız renklendirir, valueMap METNİ de değiştirir (örn 2 -> "XXX" + #ff0000). Tablo hücresinde ve graph kartında uygulanır.
   flags?: Record<string, string | { text?: string; color?: string }>;  // BAYRAK alanı: anahtar = bit MASKESİ (hex 0x04 veya dec 4); integer değerin set olan bitleri çözülüp isimleri gösterilir ((val & mask) == mask). Düz string = isim; {text,color} ile renk. Eşlenmeyen kalan bitler sonda +0x.. olarak gösterilir.
+  symbol?: boolean;  // SEMBOL alanı: değeri bir KOD ADRESİ kabul et; GDB 'print/a' ile çöz ve 'func+off' sembolünü göster (çözülemezse adres). Örn callstack PC -> hangi fonksiyon. Salt-okunur gösterim (base/edit/watch uygulanmaz).
 }
 interface SectionCfg {
   mode: 'linked_list' | 'array' | 'index_list' | 'tree' | 'walk';
@@ -470,6 +471,13 @@ function isNull(v: string): boolean {
   return v === '' || /\b0x0\b/.test(v);
 }
 
+// 'print/a' çıktısından sembolü çıkar. GDB bir kod adresini "0x.. <func+off>" diye etiketler;
+// <...> içini döndür (örn "inspect_point+7"); sembol yoksa (çözülemeyen adres) ham değeri (adresi) döndür.
+function symbolizeAddr(v: string): string {
+  const m = (v ?? '').match(/<([^>]+)>/);
+  return m ? m[1] : (v ?? '').trim();
+}
+
 // --- #5 per-element batch: bir elemanı TEK 'print' ile çekip alanları parse et ---
 // Düz üye yolu mu? (sadece ad/iç-içe ad: "id", "link.idx"; ${expr}/cast/operatör/[i] DEĞİL)
 function isPlainExpr(expr: string): boolean {
@@ -537,7 +545,7 @@ async function collectRowFields(
   const row: Row = {};
   row['__el__'] = editWrap;   // satırın KARARLI eleman ifadesi -> "watch ifadesi olarak kopyala" (tüm modlarda geçerli)
   let parsed: Record<string, string> | null = null;
-  const plainCount = fields.filter(f => isPlainExpr(f.expr) && !f.wrap).length;
+  const plainCount = fields.filter(f => isPlainExpr(f.expr) && !f.wrap && !f.symbol).length;   // symbol alanı print/a ister -> batch dışı
   if (plainCount >= 2) {
     const blobExpr = access === '->' ? `*(${wrapElem})` : `(${wrapElem})`;
     parsed = parseStruct((await gdbExec(session, `print ${blobExpr}`, frameId)).toString());
@@ -547,11 +555,14 @@ async function collectRowFields(
     let accExpr = resolveFieldExpr(f.expr, rawElem, wrapElem, access, index, depth, master);
     if (f.wrap) accExpr = subVars(f.wrap.split('${expr}').join('(' + accExpr + ')'));
     let val: string | undefined;
-    if (parsed && !f.wrap && isPlainExpr(f.expr)) {
+    if (parsed && !f.wrap && !f.symbol && isPlainExpr(f.expr)) {
       const m = structMember(parsed, f.expr);
       if (m !== undefined) val = cleanValue(m);                 // batch'ten
     }
-    if (val === undefined) val = cleanValue(await gdbExec(session, `print ${accExpr}`, frameId));   // fallback
+    if (val === undefined) {
+      if (f.symbol) val = symbolizeAddr(cleanValue(await gdbExec(session, `print/a ${accExpr}`, frameId)));   // adres -> 'func+off' sembolü
+      else val = cleanValue(await gdbExec(session, `print ${accExpr}`, frameId));   // fallback
+    }
     row[f.label] = val;
     if (f.editable) {
       // __edit__ KARARLI eleman üzerinden (geçici cursor değil) -> set var gerçek alanı değiştirir
@@ -560,7 +571,7 @@ async function collectRowFields(
       row['__edit__' + f.label] = editExpr;
     }
     // __lv__ = düz üye alanının KARARLI l-value'su (watchpoint hedefi: 'watch <lvalue>'). Sadece düz üye (computed/wrap değil).
-    if (isPlainExpr(f.expr) && !f.wrap) row['__lv__' + f.label] = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth, master);
+    if (isPlainExpr(f.expr) && !f.wrap && !f.symbol) row['__lv__' + f.label] = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth, master);
     if (f.bar) {
       const mx = barMaxExpr(f);
       if (mx) row['__bar__' + f.label] = /^\d+$/.test(mx) ? mx : cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index, depth, master)}`, frameId));
@@ -1062,7 +1073,7 @@ function dataSig(cfg: SectionCfg): string {
     count: cfg.count, access: cfg.access, cast: cfg.cast, wrap: cfg.wrap,
     start: cfg.start, while: cfg.while,
     groupBy: cfg.groupBy, max: cfg.max, label: cfg.label,
-    fields: (cfg.fields || []).map(f => ({ l: f.label, e: f.expr, w: f.wrap, wn: f.when, bm: barMax(f.bar), ed: !!f.editable, h: !!f.hidden }))
+    fields: (cfg.fields || []).map(f => ({ l: f.label, e: f.expr, w: f.wrap, wn: f.when, bm: barMax(f.bar), ed: !!f.editable, h: !!f.hidden, sym: !!f.symbol }))
   });
 }
 // sekme sırası + etkin gizli küme (refresh ile aynı kurallar)
