@@ -221,8 +221,12 @@ static bnode_t *bst_insert(bnode_t *root, int key, const char *label)
    x86-64 cercevesi: [RBP] = bir onceki RBP, [RBP+8] = donus adresi.
    Geri-sarma: fp = thread.fp; her adimda pc = *(fp+8), fp = *fp; fp stack sinirinda kaldikca surer. */
 typedef struct { unsigned long stack_base, stack_top, fp; } fake_cs_thread_t;
+/* Cerceve gorunumu: fp adresine bindirilir -> prev (offset 0) = onceki fp, pc (offset 8) = donus adresi.
+   'walk' modunda cast: "frame_t *" ile kursoru tiplemek + ${wrapped_expr}->pc / ->prev kullanmak icin. */
+typedef struct { unsigned long prev, pc; } frame_t;
 static unsigned long g_cs_stack[64];
 fake_cs_thread_t g_cs_thread;
+frame_t *g_cs_frame;   /* tipli cerceve gorunumu: frame_t'in DWARF'a girmesini garanti eder ('cast' demosu icin) */
 
 /* Breakpoint'i buraya koy. printf yerine gozlemlenebilir bir yan etki. */
 static volatile unsigned g_sink;
@@ -340,6 +344,7 @@ int main(void)
         g_cs_thread.stack_base = (unsigned long)&s[0];
         g_cs_thread.stack_top  = (unsigned long)&s[64];
         g_cs_thread.fp         = (unsigned long)&s[4];        /* (geriye-uyum: bagimsiz g_cs_thread.fp hala zincir A) */
+        g_cs_frame             = (frame_t *)&s[4];            /* tipli cerceve gorunumu (frame_t DWARF + cast demosu) */
         /* thread'lere zincir ata: ID dongusel olarak A/B/C, dorduncu yok (callstack bos) */
         for (int i = 0; i < g_thread_count; i++) {
             switch (i & 3) {

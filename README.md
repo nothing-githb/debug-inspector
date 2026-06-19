@@ -176,9 +176,10 @@ its `mode`:
   pointer fields (default `left`/`right`), skipping NULL/unreadable subtrees and
   already-visited addresses (cycle guard); the graph view lays it out as a tree.
 - **walk** starts a cursor at `start` (or `root`), emits a row, advances the
-  cursor via the `next` template (`${expr}` = current cursor), and continues
-  while the `while` boolean template is true — stopping on a NULL/unreadable
-  cursor, a repeated cursor (cycle), or no forward progress.
+  cursor via the `next` template, and continues while the `while` boolean
+  template is true — stopping on a NULL/unreadable cursor, a repeated cursor
+  (cycle), or no forward progress. Fields/templates use `${expr}` (the raw
+  cursor) or `${wrapped_expr}` (the cursor after an optional `cast`/`wrap`).
 
 Only the **currently visible columns** are fetched, so hidden columns cost
 nothing.
@@ -201,13 +202,13 @@ Every field, across all modes:
 | `root`    | most | — (required) | Starting expression in your program's own syntax (head pointer, array, buffer, or tree root). May contain `${master}` (grouping). For `walk`, use `start` instead — `root` is only a fallback when `start` is omitted. |
 | `children`| tree | `["left","right"]` | Child-pointer field names followed from each node (BFS). The graph view lays the result out as a hierarchical tree. |
 | `fields`  | all | — (required) | Ordered list of `{ "label", "expr" }` columns. `label` is the header (and first column = row identity); `expr` is the accessor appended after the element, OR a computed expression using `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (render as a usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference — jump to the target row whose `match` column equals this value; `match` defaults to the target's first column), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator make a variant/tagged‑union), `"editable": true` (right‑click → **Edit value…** writes via GDB `set var`; assignable fields only), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value, e.g. `expr:"data"` + `wrap:"((widget_t *)${expr})->x"`), and/or `"badge": { "<value>": "<color>" }` (value→color badge — names like `green`/`red`/`amber`/`cyan` or `#rrggbb` — overriding the built‑in `State` coloring), and/or `"valueMap": { "<value>": "<text>" \| { "text", "color" } }` (render a value as custom **text + color** — the text‑changing superset of `badge`; applies in the table cell and the graph card), `"flags": { "<mask>": "<name>" \| { "text", "color" } }` (decode a bit-flag integer to named flags by mask), and/or `"symbol": true` (treat the value as a **code address** and show its `function+offset` via GDB `print/a` — e.g. a callstack PC → function name; unresolved addresses stay as the address). |
-| `next`    | linked_list, index_list, walk | — (set it) | linked_list: the pointer field to the next node (used as `cursor->next`). index_list: the field holding the next **index**, OR a `${expr}` template that computes it (like `wrap` — `${expr}` is the element; e.g. `"${expr}.link.idx"` or `"g_succ[${expr}.id]"`). walk: a `${expr}` template that computes the next **cursor** from the current one, `${expr}` being the current cursor value (e.g. `"*(unsigned long *)(${expr})"`). The traversal uses this verbatim, so set it; it is only assumed to be `next` when building a grouped master's selector expression. |
+| `next`    | linked_list, index_list, walk | — (set it) | linked_list: the pointer field to the next node (used as `cursor->next`). index_list: the field holding the next **index**, OR a `${expr}` template that computes it (like `wrap` — `${expr}` is the element; e.g. `"${expr}.link.idx"` or `"g_succ[${expr}.id]"`). walk: a template that computes the next **cursor** from the current one — `${expr}` is the current raw cursor value (e.g. `"*(unsigned long *)(${expr})"`), or `${wrapped_expr}` when a `cast`/`wrap` is set (e.g. `"${wrapped_expr}->prev"`). The traversal uses this verbatim, so set it; it is only assumed to be `next` when building a grouped master's selector expression. |
 | `head`    | index_list | — | Starting **index** expression, read once. May contain `${master}` (grouping). |
 | `nil`     | index_list | `-1` | Sentinel index that ends the walk. May contain `${master}` (grouping). |
 | `count`   | array | — (required for array) | Expression giving the element count; read once per refresh. If it can't be read it's treated as `0` (empty table). May contain `${master}` (grouping). |
-| `access`  | array, index_list | `.` | Accessor between element and field — `"."` for a value element, `"->"` for a pointer. (linked_list always uses `->`.) |
-| `cast`    | array, index_list | — | Cast applied to `root` to reinterpret an untyped buffer. **Write it in full** — no `*` is appended for you. |
-| `wrap`    | all except walk | — | Template that transforms the **element** before field access; `${expr}` = the element. **Not applied in `walk`** — there `${expr}` is the raw cursor value, used verbatim; do any transform inside the `next`/`while`/field templates instead. |
+| `access`  | array, index_list, walk | `.` | Accessor between element and field — `"."` for a value element, `"->"` for a pointer. (linked_list always uses `->`.) In `walk` it applies to the default field path over `${wrapped_expr}`. |
+| `cast`    | array, index_list, walk | — | Cast — **write it in full** (no `*` is appended for you). array/index_list: reinterprets the untyped `root` buffer. walk: **types the cursor**, so `${wrapped_expr}` = `((cast)(cursor))` and you read `${wrapped_expr}->member` instead of raw pointer math. |
+| `wrap`    | all | — | Template that transforms the **element** before field access; `${expr}` = the element. In `walk` it wraps the (cast-typed) cursor to form `${wrapped_expr}`; `${expr}` there stays the **raw cursor value**, so `next`/`while` bounds math is unaffected. |
 | `label`   | master sections | row key | Expression titling each tree node when another section groups by this one. |
 | `groupBy` | grouping sections | — | Name of a master section; renders this section as a tree in its own tab. Use `${master}` in `root`. |
 | `selectedFrom` | detail sections | — | Name of a master section; makes this an **on-demand detail** (not a tab). Right-click a master row/node → **Show … (detail)** to build it for that one element; `${selected}` (in this section's traversal expressions — `root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` — and any field `expr`/`wrap`/`when`/`bar`; *not* `cast`) is the selected element's stable expression. |
@@ -364,22 +365,24 @@ NULL children stop that branch.
 **`walk`** — a **condition-bounded cursor unwind** for sequences that aren't a
 plain array or `next`-pointer list (classic case: a **call stack** unwound by
 frame pointers). A cursor starts at `start`; each step reads fields with
-`${expr}` = the current cursor, then `next` (a `${expr}` template) computes the
-next cursor; it continues **while `while` (a boolean `${expr}` template) is true**
-(plus `max` and a no-progress/cycle guard). Terminates on a **predicate**, not a
-sentinel/count. `${expr}` is the cursor value (an address) — you do the pointer
-arithmetic. Read-only.
+`${expr}` = the current **raw cursor** (and `${wrapped_expr}` = that cursor after
+an optional `cast`/`wrap`), then `next` computes the next cursor; it continues
+**while `while` (a boolean template) is true** (plus `max` and a
+no-progress/cycle guard). Terminates on a **predicate**, not a sentinel/count.
+Read-only. Either do the pointer math yourself over `${expr}`, or add a `cast`
+(e.g. `"frame_t *"`) and read typed members via `${wrapped_expr}->member`:
 
 ```jsonc
 "callstack": {
   "mode": "walk",
+  "cast":  "frame_t *",                                    // type the cursor → ${wrapped_expr} = ((frame_t *)(cursor))
   "start": "thread->fp",                                   // initial cursor (saved frame pointer)
-  "next":  "*(unsigned long *)(${expr})",                  // next FP = saved previous FP at [FP]
+  "next":  "${wrapped_expr}->prev",                        // next FP via the typed frame (${expr} = raw cursor)
   "while": "(${expr}) >= thread->stack_base && (${expr}) < thread->stack_top",
   "max":   64,
   "fields": [
-    { "label": "PC",   "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },  // return addr at [FP+8] (x86-64)
-    { "label": "Func", "expr": "*(unsigned long *)((${expr}) + 8)", "symbol": true },  // PC → function name (print/a)
+    { "label": "PC",   "expr": "${wrapped_expr}->pc", "base": "hex" },   // return address (typed member)
+    { "label": "Func", "expr": "${wrapped_expr}->pc", "symbol": true },  // PC → function name (print/a)
     { "label": "FP",   "expr": "${expr}", "base": "hex" }
   ]
 }

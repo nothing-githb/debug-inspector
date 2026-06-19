@@ -383,14 +383,15 @@ async function refreshAllDetails(): Promise<void> {
 }
 
 // Edit value sonrası: SADECE düzenlenen satırı yeniden çek (tüm bölüm/panel değil).
-// array: ((cast)root)[i] (O(1)); linked_list: root(->next)^i (tek print, zincir GDB içinde). index_list/grouped -> bölüm yenile (fallback).
+// array: ((cast)root)[i] (O(1)); linked_list: root(->next)^i (tek print, zincir GDB içinde).
+// index_list/grouped/tree/walk -> kararlı O(1) satır ifadesi yok, bölüm yenile (fallback).
 async function refreshRow(section: string, rowIndex: number | null) {
   if (!panel || !lastStopped) return;
   const cfg = loadConfig(); if (!cfg) return;
   const node = extractSections(cfg).find(s => s.name === section);
   if (!node) return;
   const scfg = node.cfg;
-  if (rowIndex == null || rowIndex < 0 || isGrouped(scfg) || scfg.mode === 'index_list') { refreshTarget(section); return; }
+  if (rowIndex == null || rowIndex < 0 || isGrouped(scfg) || scfg.mode === 'index_list' || scfg.mode === 'tree' || scfg.mode === 'walk') { refreshTarget(section); return; }
   const rel = await gdbAcquire();   // tekil satır fetch'i de refresh / diğer işlemlerle iç içe geçmesin
   try {
   const session = lastStopped.session;
@@ -732,7 +733,15 @@ async function collectSection(
     // KOŞULLU geri-sarma (örn. FP-zinciri callstack): kürsör 'start'tan başlar; 'while' (boolean ${expr}) doğru
     // oldukça satır üretir; 'next' (${expr} -> sonraki kürsör) ile ilerler. ${expr} = o anki kürsör DEĞERİ (adres).
     const startExpr = cfg.start ?? cfg.root;
-    const subC = (tpl: string, cur: string): string => tpl.split('${expr}').join('(' + cur + ')');
+    const access = cfg.access ?? '.';   // ${wrapped_expr}/varsayılan alan yolunda kullanılır
+    // cast (örn "frame_t *") önce kürsöre, sonra wrap uygulanır -> ${wrapped_expr}. cast/wrap yoksa ham kürsör.
+    const wrapCur = (cur: string): string => {
+      const c = cfg.cast ? '((' + cfg.cast + ')(' + cur + '))' : cur;
+      return cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + c + ')') + ')' : c;
+    };
+    // next/while/alan şablonları: ${wrapped_expr}=cast+wrap'li kürsör, ${expr}=HAM kürsör değeri (önce uzun token).
+    const subC = (tpl: string, cur: string): string =>
+      tpl.split('${wrapped_expr}').join('(' + wrapCur(cur) + ')').split('${expr}').join('(' + cur + ')');
     const badCur = (v: string): boolean => isNull(v) || /^<<error|no symbol|cannot access memory|<error reading|value (has been )?optimized out/i.test(v);
     let cur = cleanValue(await gdbExec(session, `print ${startExpr}`, frameId));
     const seenW: Record<string, boolean> = {};
@@ -745,8 +754,9 @@ async function collectSection(
       if (cfg.while && !condTrue(cleanValue(await gdbExec(session, `print ${subC(cfg.while, cur)}`, frameId)))) { reason = 'while=false (out of bounds)'; break; }
       if (seenW[cur]) { reason = `cycle (cursor ${cur} repeats)`; break; }
       seenW[cur] = true;
-      // satır: alanlar ${expr}=kürsör ile (collectRowFields ${expr}'i çözer; eleman = kürsör değeri, salt-okunur)
-      rows.push(await collectRowFields(session, cfg.fields, frameId, cur, cur, '.'));
+      // satır: ${expr}=HAM kürsör DEĞERİ (next/while ile aynı; aritmetik için bozulmaz), ${wrapped_expr}=cast+wrap'li
+      // kürsör. Böylece array/linked gibi walk'ta da cast/wrap/${wrapped_expr} geçerli (eskiden sessizce yok sayılırdı).
+      rows.push(await collectRowFields(session, cfg.fields, frameId, cur, wrapCur(cur), access));
       if (!cfg.next) { reason = 'no next'; break; }
       const nxw = cleanValue(await gdbExec(session, `print ${subC(cfg.next, cur)}`, frameId));
       log.trace(`walk "${name}" frame ${guard - 1}: cursor=${cur} → next [ ${subC(cfg.next, cur)} ] = "${nxw}"`);

@@ -2,6 +2,29 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.71.0] - 2026-06-19
+
+### Added
+- **`walk` mode now honors `cast`, `wrap`, and `access`** (previously they were silently ignored in
+  `walk` — only `${expr}` worked). A `cast` (e.g. `"frame_t *"`) types the cursor, so the new
+  **`${wrapped_expr}`** placeholder is `((cast)(cursor))` (optionally `wrap`-ed). You can now write a
+  callstack as typed member reads — `next: "${wrapped_expr}->prev"`, `expr: "${wrapped_expr}->pc"` —
+  instead of raw pointer arithmetic. `${wrapped_expr}` works in `next`/`while` as well as fields.
+  **`${expr}` in `walk` stays the raw cursor value**, so existing `${expr}`-only walk configs and all
+  bounds/arithmetic are unchanged (byte-identical when no `cast`/`wrap` is set). The demo's `callstack`
+  detail now dogfoods this via a `frame_t` cast.
+
+### Fixed
+- A single-row refresh (after an inline edit) on a `walk` or `tree` section now falls back to a full
+  section refresh — those modes have no stable O(1) per-row expression, so the previous path could
+  have produced a wrong `root->next^i` selector.
+
+### Testing
+- New gate step proves the `walk` + `cast` path end-to-end against real GDB (typed `${wrapped_expr}->pc`
+  equals the raw `*(unsigned long *)(fp+8)` form, symbol resolves, `->prev` chains frames), plus unit
+  asserts for the `cast`/`wrap` → `${wrapped_expr}` substitution and a regression guard that a
+  cast/wrap-free walk config is unchanged.
+
 ## [0.70.2] - 2026-06-19
 
 ### Performance
@@ -42,7 +65,8 @@ All notable changes to the **Debug Inspector** extension are documented here.
 - Added screenshots of the on-demand detail (table accordion + graph panel) to the READMEs.
 - Corrected several stale schema/feature statements surfaced by a pre-release docs audit: the mode
   count is now **five** (walk was missing), the `root`/`next`/`wrap` schema rows now reflect `walk`
-  (walk uses `start`, consumes `next`, and ignores `wrap`), and the `${selected}` substitution scope
+  (walk uses `start`, consumes `next`; `wrap`/`cast` support was added later in 0.71.0), and the
+  `${selected}` substitution scope
   is documented in full (`root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` + field
   `expr`/`wrap`/`when`/`bar`, everything except `cast`).
 

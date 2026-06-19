@@ -2,7 +2,7 @@
   "name": "debug-inspector",
   "displayName": "Debug Inspector",
   "description": "Visualize your own C/C++ data structures — threads, semaphores, mutexes, queues, linked lists, any struct collection — as live, sortable tables while debugging with GDB. Config-driven and read-only.",
-  "version": "0.70.2",
+  "version": "0.71.0",
   "publisher": "halistahasahin",
   "license": "MIT",
   "icon": "icon.png",
@@ -52,6 +52,12 @@
     "watch",
     "memory",
     "table",
+    "callstack",
+    "call-stack",
+    "backtrace",
+    "stack-frame",
+    "symbol",
+    "walk",
     "c",
     "c++"
   ],
@@ -131,7 +137,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "package": "vsce package --out ../dist/"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",

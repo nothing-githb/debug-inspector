@@ -112,15 +112,15 @@ The config file (default `debug-inspector.json`) is a JSON object that is a **ma
 | `mode`    | all *(required)*            | `"linked_list"`, `"array"`, `"index_list"`, `"tree"`, or `"walk"`. |
 | `root`    | most *(required)*           | Starting expression in your program's own syntax (head pointer, array, or tree root). May contain `${master}` (grouping). For `walk`, use `start` instead. |
 | `children`| tree                        | Child-pointer field names walked from each node (BFS); defaults to `["left","right"]`. The graph view draws the result as a hierarchical tree. |
-| `start`   | walk                        | Initial cursor (an address/value expression). `${expr}` in `next`/`while`/fields is the current cursor. |
+| `start`   | walk                        | Initial cursor (an address/value expression). In `next`/`while`/fields, `${expr}` is the current **raw cursor**; `${wrapped_expr}` is that cursor after `cast`+`wrap` (e.g. `((frame_t *)(cursor))`). |
 | `while`   | walk                        | Boolean `${expr}` template; the walk continues while it's true and stops when false (e.g. cursor within stack bounds). |
 | `next`    | linked_list, index_list, walk | Field giving the next element — a **pointer** (`cursor->next`) for linked_list, an **index** for index_list. For index_list/`walk` it may instead be a `${expr}` **template** (like `wrap`) that computes the next index/cursor, e.g. `"${expr}.link.idx"` or `"*(unsigned long *)(${expr})"`. Used verbatim, so set it (it only falls back to `next` when building a master's clickable/grouped selector). |
 | `head`    | index_list                  | Starting **index** expression. May contain `${master}` (grouping). |
 | `nil`     | index_list                  | Sentinel index that ends the walk (default `-1`). May contain `${master}` (grouping). |
 | `count`   | array                       | Expression yielding the element count (parsed as an integer). May contain `${master}` (grouping). |
-| `access`  | array, index_list           | Element-to-field accessor: `"."` (default) or `"->"` for a pointer element. (linked_list is always `->`.) |
-| `cast`    | array, index_list           | Cast applied to `root` to reinterpret a generic/`void*` buffer — **written in full** (e.g. `widget_t *`); no `*` is auto-added. |
-| `wrap`    | all except walk             | Template that transforms the **element** before field access; `${expr}` is the element. In `walk`, `wrap` is ignored — `${expr}` is the cursor value used verbatim; put any transform in the `next`/`while`/field templates. |
+| `access`  | array, index_list, walk     | Element-to-field accessor: `"."` (default) or `"->"` for a pointer element. (linked_list is always `->`.) In `walk` it applies to the default field path over `${wrapped_expr}`. |
+| `cast`    | array, index_list, walk     | Cast — **written in full** (e.g. `widget_t *`); no `*` is auto-added. For array/index_list it reinterprets a generic/`void*` `root` buffer. In `walk` it **types the cursor**: `${wrapped_expr}` becomes `((cast)(cursor))`, so you write `${wrapped_expr}->member` instead of raw pointer math. |
+| `wrap`    | all                         | Template that transforms the **element** before field access; `${expr}` is the element. In `walk` it wraps the (cast-typed) cursor to form `${wrapped_expr}`; `${expr}` there stays the **raw cursor value** (so `next`/`while` arithmetic is unaffected). |
 | `label`   | master sections             | Expression evaluated on the master element to title each tree node when another section groups by this one. |
 | `groupBy` | grouping sections           | Names a master section; renders this section as a collapsible tree, one group per master element (use `${master}` in `root`/`head`/`count`/`nil`). |
 | `selectedFrom` | detail sections        | Names a master section; makes this an **on-demand detail** — *not* a tab. Right-click a master row/node → **Show … (detail)** to build it for that one element. `${selected}` (in this section's traversal expressions — `root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` — and in any field `expr`/`wrap`/`when`/`bar`; *not* `cast`) is the selected element's stable expression. |
@@ -235,7 +235,7 @@ Walk a tree from `root`, following each node's **child pointers**. `children` li
 
 ### Mode 5 — `walk` (condition-bounded cursor unwind)
 
-A **computed walk** for sequences that aren't a plain array or `next`-pointer list — the classic case is a **call stack** unwound by following frame pointers. A *cursor* starts at `start`, and at each step the row's fields are read with **`${expr}` = the current cursor value**, then `next` (a `${expr}` template) computes the next cursor; the walk continues **while `while` (a boolean `${expr}` template) is true** and stops when it goes false (plus a `max` cap and a no-progress/cycle guard). Unlike the other modes it terminates on a **predicate**, not a sentinel or a count.
+A **computed walk** for sequences that aren't a plain array or `next`-pointer list — the classic case is a **call stack** unwound by following frame pointers. A *cursor* starts at `start`, and at each step the row's fields are read with **`${expr}` = the current raw cursor value** (and **`${wrapped_expr}`** = that cursor after an optional `cast`/`wrap`), then `next` (a template over `${expr}`/`${wrapped_expr}`) computes the next cursor; the walk continues **while `while` (a boolean template) is true** and stops when it goes false (plus a `max` cap and a no-progress/cycle guard). Unlike the other modes it terminates on a **predicate**, not a sentinel or a count.
 
 ```json
 {
@@ -253,7 +253,27 @@ A **computed walk** for sequences that aren't a plain array or `next`-pointer li
 }
 ```
 
-`${expr}` is the cursor value (an address), so you do the pointer arithmetic yourself — this works for a frame-pointer chain (above), an SP scan, or any "advance until out of bounds" traversal. It's read-only (no edit/watch on computed frames).
+`${expr}` is the **raw cursor value** (an address), so you can do the pointer arithmetic yourself — this works for a frame-pointer chain (above), an SP scan, or any "advance until out of bounds" traversal. It's read-only (no edit/watch on computed frames).
+
+To skip the manual casting, add a **`cast`** (and/or `wrap`) and use **`${wrapped_expr}`** — the cursor typed once. `cast` types the cursor (`${wrapped_expr}` = `((cast)(cursor))`), so `next` and the fields read members directly while `${expr}` stays the raw value for the bounds check:
+
+```json
+{
+  "callstack": {
+    "mode": "walk",
+    "cast":  "frame_t *",                                                 // type the cursor once
+    "start": "thread->fp",
+    "next":  "${wrapped_expr}->prev",                                      // next FP via the typed frame, not raw [FP] math
+    "while": "(${expr}) >= thread->stack_base && (${expr}) < thread->stack_top",  // ${expr} = raw cursor (bounds)
+    "max":   64,
+    "fields": [
+      { "label": "PC",   "expr": "${wrapped_expr}->pc", "base": "hex" },   // return address as a typed member
+      { "label": "Func", "expr": "${wrapped_expr}->pc", "symbol": true },  // … resolved to its function symbol
+      { "label": "FP",   "expr": "${expr}", "base": "hex" }
+    ]
+  }
+}
+```
 
 ### On-demand detail (`selectedFrom` + `${selected}`)
 
