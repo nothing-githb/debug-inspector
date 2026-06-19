@@ -574,7 +574,14 @@ async function collectRowFields(
     if (isPlainExpr(f.expr) && !f.wrap && !f.symbol) row['__lv__' + f.label] = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth, master);
     if (f.bar) {
       const mx = barMaxExpr(f);
-      if (mx) row['__bar__' + f.label] = /^\d+$/.test(mx) ? mx : cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index, depth, master)}`, frameId));
+      if (mx) {
+        let bv: string | undefined;
+        if (/^\d+$/.test(mx)) bv = mx;   // sabit max
+        // PERF: bar max düz bir üye ise (örn stack_size) zaten çekilmiş struct blob'undan oku -> satır başına ekstra 'print' turu YOK
+        else if (parsed && isPlainExpr(mx)) { const pm = structMember(parsed, mx); if (pm !== undefined) bv = cleanValue(pm); }
+        if (bv === undefined) bv = cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index, depth, master)}`, frameId));
+        row['__bar__' + f.label] = bv;
+      }
     }
   }
   return row;

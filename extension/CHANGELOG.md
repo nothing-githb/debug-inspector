@@ -2,6 +2,18 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.70.2] - 2026-06-19
+
+### Performance
+- A field that pairs a `bar` with a plain-member max (e.g. the `threads` `Stack` bar over
+  `stack_size`) no longer issues a **separate GDB `print` for the bar's max** — that value already
+  arrives in the single struct `print` the row fetches for its other plain fields, so it is now read
+  from that parsed blob. Every GDB access is serialized through a mutex, so the number of round-trips
+  dominates load time; this removes **one round-trip per row**. For the grouped `threads` section
+  (e.g. 8 processes × 6 threads = 48 rows) that is ~48 fewer serialized GDB calls per stop — the
+  `threads` tab was the slowest because it is the only section carrying both a `bar` and a computed
+  field. (No change to displayed values.)
+
 ## [0.70.1] - 2026-06-19
 
 ### Testing
