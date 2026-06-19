@@ -182,7 +182,9 @@ its `mode`:
   cursor) or `${wrapped_expr}` (the cursor after an optional `cast`/`wrap`).
 
 Only the **currently visible columns** are fetched, so hidden columns cost
-nothing.
+nothing. Rows are also **rendered progressively** — they appear as each is read
+from GDB (under a `⟳ Loading…` banner) rather than all at once when the section
+finishes, so large/grouped sections stay responsive.
 
 ## Configuration
 

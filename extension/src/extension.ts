@@ -325,7 +325,7 @@ async function refreshTarget(section: string, label?: string) {
     const mIdx = secs.findIndex(s => s.name === mName);
     if (mIdx < 0) return;
     const mSec = await buildSection(session, secs[mIdx].cfg, frameId, '$ri_' + mIdx, mName);
-    masters[mName] = { sec: mSec, selExprs: mSec.rows.map((_, k) => selectorExpr(secs[mIdx].cfg, k)), cfg: secs[mIdx].cfg };
+    masters[mName] = { sec: mSec, selExprs: masterSelExprs(mSec, secs[mIdx].cfg), cfg: secs[mIdx].cfg };
   }
   const ts = new Date().toLocaleTimeString();
 
@@ -640,10 +640,14 @@ async function collectSection(
   cursor: string,
   name: string = '',
   isStale?: () => boolean,   // iptal kancası: continue/yeni durak gelince satır döngüsünü erken bırak (çalışan hedefe print atma)
-  masterExpr?: string   // gruplu bölümde bu grubun master eleman ifadesi -> field expr'lerinde ${master}
+  masterExpr?: string,   // gruplu bölümde bu grubun master eleman ifadesi -> field expr'lerinde ${master}
+  onProgress?: (rows: Row[]) => void   // satır akışı: satırlar biriktikçe (throttle'lı) çağrılır -> webview kısmi tabloyu çizer
 ): Promise<Row[]> {
   const rows: Row[] = [];
   const max = cfg.max ?? 1024;
+  // Akış: her satırdan sonra, en çok ~her STREAM_MS bir kez, o ana kadarki satırları yayınla (postMessage selini önler).
+  let lastEmit = 0;
+  const emit = () => { if (!onProgress || !rows.length) return; const now = Date.now(); if (now - lastEmit >= 80) { lastEmit = now; onProgress(rows); } };
 
   if (cfg.mode === 'array') {
     const access = cfg.access ?? '.';
@@ -658,6 +662,7 @@ async function collectSection(
       const elemRaw = `${base}[${i}]`;
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + elemRaw + ')') + ')' : elemRaw; // (wrap)<access>field
       rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, i, undefined, masterExpr));   // ${index} = i (dizi index'i)
+      emit();
     }
   } else if (cfg.mode === 'index_list') {
     // Dizi içinde index ile bağlı liste: head index'inden başla, next alanı sonraki index'i verir
@@ -691,6 +696,7 @@ async function collectSection(
       // field'a erişmeden ÖNCE wrap ile sarmalanır (çıktı parantezlenir: (wrap)<access>field)
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + elemRaw + ')') + ')' : elemRaw;
       rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, fromIdx, undefined, masterExpr));   // ${index} = bu slotun dizi index'i
+      emit();
       // next şablonu: ${expr}=ham eleman (wrap ile aynı), ${wrapped_expr}=wrap/cast'li eleman; yoksa elem<access>next
       const hasTpl = cfg.next && (cfg.next.indexOf('${expr}') !== -1 || cfg.next.indexOf('${wrapped_expr}') !== -1);
       const nextExpr = hasTpl
@@ -725,6 +731,7 @@ async function collectSection(
       const row = await collectRowFields(session, cfg.fields, frameId, node.expr, elem, '->', node.expr, elem, undefined, node.depth, masterExpr);   // ağaçta ${index} YOK (gerçek dizi index'i değil); ${depth} = derinlik (kök=0); ${master} grouped ağaçta geçerli
       row['__parent__'] = node.parent < 0 ? '' : String(node.parent);
       rows.push(row);
+      emit();
       for (const cf of childFields) queue.push({ expr: `${node.expr}->${cf}`, parent: myIdx, depth: node.depth + 1 });
       log.trace(`tree "${name}" node ${myIdx} (parent ${node.parent}): ${node.expr} = ${curRaw}`);
     }
@@ -744,6 +751,11 @@ async function collectSection(
       tpl.split('${wrapped_expr}').join('(' + wrapCur(cur) + ')').split('${expr}').join('(' + cur + ')');
     const badCur = (v: string): boolean => isNull(v) || /^<<error|no symbol|cannot access memory|<error reading|value (has been )?optimized out/i.test(v);
     let cur = cleanValue(await gdbExec(session, `print ${startExpr}`, frameId));
+    // KARARLI sembolik eleman (canlı kürsör ADRESİ değil): 'start'a 'next' şablonu i kez uygulanmış, her durakta
+    // yeniden değerlendirilebilir ifade — linked_list'in root(->next)^i karşılığı. __el__/__edit__/__lv__ + master
+    // selExpr (groupBy / selectedFrom ${selected}) BUNU kullanır; canlı 'cur' yalnız hızlı alan okuması için.
+    // subC ham ifade üzerinde de çalışır: sembolik ifadeyi verince sonraki KARARLI ifadeyi üretir (değer yerine ifade).
+    let sRaw = startExpr;
     const seenW: Record<string, boolean> = {};
     let guard = 0, reason = 'end';
     log.debug(`walk "${name}": start(${startExpr})="${cur}", next=${cfg.next}, while=${cfg.while}`);
@@ -756,12 +768,16 @@ async function collectSection(
       seenW[cur] = true;
       // satır: ${expr}=HAM kürsör DEĞERİ (next/while ile aynı; aritmetik için bozulmaz), ${wrapped_expr}=cast+wrap'li
       // kürsör. Böylece array/linked gibi walk'ta da cast/wrap/${wrapped_expr} geçerli (eskiden sessizce yok sayılırdı).
-      rows.push(await collectRowFields(session, cfg.fields, frameId, cur, wrapCur(cur), access));
+      // editRaw/editWrap = KARARLI sembolik eleman (sRaw); master selExpr ve "watch ifadesi kopyala" donmuş adres almasın.
+      // masterExpr de geçilir -> walk-as-grouped-child alanlarında ${master} çözülür (eskiden geçilmiyordu).
+      rows.push(await collectRowFields(session, cfg.fields, frameId, cur, wrapCur(cur), access, sRaw, wrapCur(sRaw), undefined, undefined, masterExpr));
+      emit();
       if (!cfg.next) { reason = 'no next'; break; }
       const nxw = cleanValue(await gdbExec(session, `print ${subC(cfg.next, cur)}`, frameId));
       log.trace(`walk "${name}" frame ${guard - 1}: cursor=${cur} → next [ ${subC(cfg.next, cur)} ] = "${nxw}"`);
       if (nxw === cur) { reason = 'no progress'; break; }
       cur = nxw;
+      sRaw = subC(cfg.next, sRaw);   // sembolik ilerleme: canlı kürsörle AYNI 'next' şablonu, ham KARARLI ifade üzerinde
     }
     log.debug(`walk "${name}": ${rows.length} frame(s); stopped: ${reason}`);
   } else {
@@ -785,6 +801,7 @@ async function collectSection(
         sElem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + sRaw + ')') + ')' : sRaw;
       }
       rows.push(await collectRowFields(session, cfg.fields, frameId, cursor, elem, '->', sRaw, sElem, undefined, undefined, masterExpr));   // linked_list'te ${index} YOK; ${master} grouped'da geçerli
+      emit();
       log.trace(`linked_list "${name}" node ${guard - 1}: cursor=${cur} → advance via ${cursor}->${cfg.next}`);
       // #2: advance + sonraki değeri (null-check) TEK çağrıda — eski 'set' + ayrı 'print cursor' yerine
       cur = cleanValue(await gdbExec(session, `print ${cursor} = ${cursor}->${cfg.next}`, frameId));
@@ -961,17 +978,21 @@ async function buildSection(
   frameId: number | undefined,
   cursor: string,
   name: string,
-  isStale?: () => boolean
+  isStale?: () => boolean,
+  onStream?: (sec: Section) => void   // satır akışı: satırlar geldikçe kısmi Section yayınla (sunum salt-okunur; tablo başlığı + çubuk/link meta'sı baştan hazır)
 ): Promise<Section> {
   warnMasterMisuseIfAny(name, cfg);   // gruplu OLMAYAN bölümde ${master} kullanılmışsa uyar (çözülmez)
   const eff = effectiveColumns(name, cfg.fields);
   const effFields = eff.active
     .map(l => cfg.fields.find(f => f.label === l))
     .filter((f): f is FieldCfg => !!f);
-  const rows = await collectSection(session, { ...cfg, fields: effFields }, frameId, cursor, name, isStale);
-  log?.debug(`section "${name}" (${cfg.mode}, root=${cfg.root}): ${rows.length} row(s); active=[${eff.active.join(', ')}]`);
   const kind: 'linked' | 'array' | 'index' | 'tree' = cfg.mode === 'array' ? 'array' : cfg.mode === 'index_list' ? 'index' : cfg.mode === 'tree' ? 'tree' : 'linked';
-  return { name, columnsAll: eff.order, hidden: eff.hidden, rows, summary: summarize(name, rows), bases: fieldBases(cfg.fields), bars: fieldBars(cfg.fields), links: fieldLinks(cfg.fields), badges: fieldBadges(cfg.fields), valueMap: fieldValueMap(cfg.fields), flags: fieldFlags(cfg.fields), kind };
+  // GDB gerektirmeyen sunum meta'sı (kolonlar + çubuk/link/rozet/...) — bir kez hesapla, hem akışta hem son halde kullan.
+  const meta = { columnsAll: eff.order, hidden: eff.hidden, bases: fieldBases(cfg.fields), bars: fieldBars(cfg.fields), links: fieldLinks(cfg.fields), badges: fieldBadges(cfg.fields), valueMap: fieldValueMap(cfg.fields), flags: fieldFlags(cfg.fields), kind };
+  const onProgress = onStream ? (rs: Row[]) => onStream({ name, ...meta, rows: rs.slice(), summary: '' }) : undefined;
+  const rows = await collectSection(session, { ...cfg, fields: effFields }, frameId, cursor, name, isStale, undefined, onProgress);
+  log?.debug(`section "${name}" (${cfg.mode}, root=${cfg.root}): ${rows.length} row(s); active=[${eff.active.join(', ')}]`);
+  return { name, ...meta, rows, summary: summarize(name, rows) };
 }
 
 // ---------------------------------------------------------------------------
@@ -979,19 +1000,40 @@ async function buildSection(
 // ---------------------------------------------------------------------------
 // Master satırın elemanını yeniden seçen ifade (tip-güvenli, adres/cast gerektirmez)
 function selectorExpr(cfg: SectionCfg, index: number): string {
-  // collectSection'daki eleman üretimiyle birebir: cast + wrap DAHİL işlenmiş eleman
-  let elem: string;
+  // collectSection'daki eleman üretimiyle birebir: cast + wrap DAHİL işlenmiş eleman.
+  // NOT: Bu yalnız SAVUNMA AMAÇLI FALLBACK'tir — master selExpr'leri normalde satırın __el__'inden okunur
+  // (masterSelExprs). __el__ TÜM modlarda doğrudur; selectorExpr array/linked/walk'ı yeniden üretebilir ama
+  // index_list/tree'nin satır-başına gerçek slot/yolunu bilemez (o yüzden o modlar __el__'e bağımlıdır).
   if (cfg.mode === 'array') {
     const base = cfg.cast ? `((${cfg.cast})(${cfg.root}))` : `(${cfg.root})`;
-    elem = `${base}[${index}]`;
-  } else {
-    let e = cfg.root;
-    const nx = cfg.next ?? 'next';
-    for (let k = 0; k < index; k++) e = e + '->' + nx;   // root(->next)^index
-    elem = e;
+    let elem = `${base}[${index}]`;
+    if (cfg.wrap) elem = cfg.wrap.split('${expr}').join('(' + elem + ')');
+    return elem;
   }
-  if (cfg.wrap) elem = cfg.wrap.split('${expr}').join('(' + elem + ')');
-  return elem;
+  if (cfg.mode === 'walk') {
+    // walk: KARARLI sembolik eleman = (start)'a 'next' şablonu index kez uygulanmış (canlı kürsör adresi DEĞİL).
+    // collectSection'ın walk dalındaki sRaw/wrapCur ile birebir; linked'in root(->next)^i'sinin walk karşılığı.
+    const wrapCur = (e: string): string => {
+      const c = cfg.cast ? '((' + cfg.cast + ')(' + e + '))' : e;
+      return cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + c + ')') + ')' : c;
+    };
+    let e = cfg.start ?? cfg.root;
+    const nx = cfg.next ?? '';
+    for (let k = 0; k < index && nx; k++)
+      e = nx.split('${wrapped_expr}').join('(' + wrapCur(e) + ')').split('${expr}').join('(' + e + ')');
+    return wrapCur(e);
+  }
+  // linked_list (doğru) + index_list/tree (yalnız kaba fallback): root(->next)^index
+  let e = cfg.root;
+  const nx = cfg.next ?? 'next';
+  for (let k = 0; k < index; k++) e = e + '->' + nx;
+  return cfg.wrap ? cfg.wrap.split('${expr}').join('(' + e + ')') : e;
+}
+// Master satırların KARARLI eleman ifadeleri (groupBy selExprs + refreshTarget). Her satır collectRowFields'ta
+// __el__ taşır (cast+wrap'li kararlı eleman; array/linked/index_list/tree/walk HEPSİNDE doğru — walk'ta
+// start+next^i, index_list/tree'de gerçek slot/BFS-yolu). __el__'i tercih et; yoksa selectorExpr'e düş.
+function masterSelExprs(sec: Section, cfg: SectionCfg): string[] {
+  return sec.rows.map((r, idx) => (typeof r['__el__'] === 'string' && r['__el__']) ? r['__el__'] : selectorExpr(cfg, idx));
 }
 function isGrouped(cfg: SectionCfg): boolean {
   return typeof cfg.groupBy === 'string' && cfg.groupBy.length > 0;
@@ -1040,12 +1082,16 @@ async function buildGrouped(
   name: string,
   scfg: SectionCfg,
   masters: Record<string, { sec: Section; selExprs: string[]; cfg: SectionCfg }>,
-  isStale?: () => boolean
+  isStale?: () => boolean,
+  onStream?: (sec: Section) => void   // grup akışı: her grup tamamlandıkça kısmi Section yayınla (throttle'lı)
 ): Promise<Section> {
   const eff = effectiveColumns(name, scfg.fields);
   const effFields = eff.active
     .map(l => scfg.fields.find(f => f.label === l))
     .filter((f): f is FieldCfg => !!f);
+  // GDB gerektirmeyen sunum meta'sı — bir kez hesapla (akış emisyonları + son hal aynı meta'yı kullanır).
+  const gkind: 'linked' | 'array' | 'index' | 'tree' = scfg.mode === 'array' ? 'array' : scfg.mode === 'index_list' ? 'index' : scfg.mode === 'tree' ? 'tree' : 'linked';
+  const meta = { columnsAll: eff.order, hidden: eff.hidden, grouped: true as const, kind: gkind, bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields), links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields), flags: fieldFlags(scfg.fields) };
   const m = masters[scfg.groupBy as string];
   if (!m || !m.sec.rows.length) {
     log?.warn(`grouped "${name}": master "${scfg.groupBy}" not found or empty`);
@@ -1053,6 +1099,8 @@ async function buildGrouped(
   }
   const masterAcc = m.cfg.mode === 'array' ? (m.cfg.access ?? '.') : '->';
   const groups: Group[] = [];
+  let lastEmit = 0;
+  const emit = () => { if (!onStream || !groups.length) return; const now = Date.now(); if (now - lastEmit >= 80) { lastEmit = now; onStream({ name, ...meta, rows: [], groups: groups.slice(), summary: '' }); } };
   for (let mi = 0; mi < m.sec.rows.length; mi++) {
     if (isStale && isStale()) break;   // continue/yeni durak -> grupları çekmeyi bırak
     const selExpr = m.selExprs[mi];
@@ -1062,7 +1110,11 @@ async function buildGrouped(
       root: substituteMaster(scfg.root, selExpr),
       count: scfg.count ? substituteMaster(scfg.count, selExpr) : scfg.count,
       head: scfg.head ? substituteMaster(scfg.head, selExpr) : scfg.head,
-      nil: scfg.nil ? substituteMaster(scfg.nil, selExpr) : scfg.nil
+      nil: scfg.nil ? substituteMaster(scfg.nil, selExpr) : scfg.nil,
+      // walk-as-grouped-child: start/while/next de ${master} taşıyabilir (örn. start "${master}->cs_fp") -> substitue et
+      start: scfg.start ? substituteMaster(scfg.start, selExpr) : scfg.start,
+      while: scfg.while ? substituteMaster(scfg.while, selExpr) : scfg.while,
+      next: scfg.next ? substituteMaster(scfg.next, selExpr) : scfg.next
     };
     const rows = await collectSection(session, subCfg, frameId, '$rg_' + i + '_' + mi, name, isStale, selExpr);   // ${master} = bu grubun master elemanı (field expr'lerinde)
     const key = rowKeyAt(m.sec, mi) ?? String(mi);
@@ -1070,12 +1122,11 @@ async function buildGrouped(
       ? nodeLabel(cleanValue(await gdbExec(session, `print (${selExpr})${masterAcc}${m.cfg.label}`, frameId)))
       : key;
     groups.push({ label, key, rows });
+    emit();
   }
   const total = groups.reduce((a, g) => a + g.rows.length, 0);
   log?.debug(`grouped "${name}" by ${scfg.groupBy}: ${groups.length} group(s), ${total} row(s)`);
-  // grouped bölüm için de kind: groupBy + mode:tree -> graph view her grubu kendi ağacı olarak çizebilsin
-  const gkind: 'linked' | 'array' | 'index' | 'tree' = scfg.mode === 'array' ? 'array' : scfg.mode === 'index_list' ? 'index' : scfg.mode === 'tree' ? 'tree' : 'linked';
-  return { name, columnsAll: eff.order, hidden: eff.hidden, rows: [], summary: `${total} ${name} · ${groups.length} ${scfg.groupBy}`, grouped: true, groups, kind: gkind, bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields), links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields), flags: fieldFlags(scfg.fields) };
+  return { name, ...meta, rows: [], summary: `${total} ${name} · ${groups.length} ${scfg.groupBy}`, groups };
 }
 
 // ---------------------------------------------------------------------------
@@ -1155,11 +1206,13 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
   const masters: Record<string, { sec: Section; selExprs: string[]; cfg: SectionCfg }> = {};
   const built = new Set<string>();
   const sendSec = (name: string, sec: Section) => { built.add(name); panel?.webview.postMessage({ type: 'patchSection', section: name, sec, ts }); };
+  // AKIŞ: bir bölüm kurulurken satırlar/gruplar geldikçe kısmi tabloyu gönder (yalnız görünür + henüz son hali verilmemiş + güncel durak).
+  const streamPost = (name: string) => (sec: Section) => { if (!stale() && !built.has(name) && visible.includes(name)) panel?.webview.postMessage({ type: 'streamSection', section: name, sec, ts }); };
   const ensureMaster = async (mName: string): Promise<void> => {
     if (masters[mName]) return;
     const mm = byName[mName]; if (!mm) return;
-    const msec = await buildSection(session, mm.cfg, frameId, '$ri_' + mm.i, mName, stale);
-    masters[mName] = { sec: msec, selExprs: msec.rows.map((_, idx) => selectorExpr(mm.cfg, idx)), cfg: mm.cfg };
+    const msec = await buildSection(session, mm.cfg, frameId, '$ri_' + mm.i, mName, stale, streamPost(mName));
+    masters[mName] = { sec: msec, selExprs: masterSelExprs(msec, mm.cfg), cfg: mm.cfg };
     if (visible.includes(mName) && !built.has(mName)) sendSec(mName, msec);   // master aynı zamanda görünür sekme -> hemen göster
   };
 
@@ -1174,12 +1227,12 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
     if (isGrouped(node.cfg)) {
       await ensureMaster(node.cfg.groupBy as string);
       if (stale()) return;
-      sec = await buildGrouped(session, frameId, node.i, next, node.cfg, masters, stale);
+      sec = await buildGrouped(session, frameId, node.i, next, node.cfg, masters, stale, streamPost(next));
     } else if (masters[next]) {
       sec = masters[next].sec;   // başka bir grouped bölüm için zaten kurulmuş
     } else {
-      sec = await buildSection(session, node.cfg, frameId, '$ri_' + node.i, next, stale);
-      masters[next] = { sec, selExprs: sec.rows.map((_, idx) => selectorExpr(node.cfg, idx)), cfg: node.cfg };
+      sec = await buildSection(session, node.cfg, frameId, '$ri_' + node.i, next, stale, streamPost(next));
+      masters[next] = { sec, selExprs: masterSelExprs(sec, node.cfg), cfg: node.cfg };
     }
     if (stale()) return;
     if (!built.has(next)) sendSec(next, sec);
@@ -1527,6 +1580,9 @@ function getHtml(): string {
 
   .empty { opacity: 0.55; padding: 28px 4px; font-size: 13px; }
   .empty.loading { font-style: italic; animation: di-pulse 1.2s ease-in-out infinite; }
+  /* akış önizlemesi başlığı: satırlar gelirken "Loading… N rows" (yükleme sürdüğünü belirtir) */
+  .summary.loading { opacity: 1; animation: di-pulse 1.2s ease-in-out infinite; }
+  .summary.loading::before { content: "⟳ "; display: inline-block; }
   @keyframes di-pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 0.7; } }
   @keyframes di-spin { to { transform: rotate(360deg); } }
   .btn.busy { opacity: 0.75; }
@@ -2979,6 +3035,29 @@ function getHtml(): string {
     if (cnt) cnt.textContent = '…';
   }
   function hasData(name) { const st = secState[name]; return !!(st && st.sec); }
+  // AKIŞ önizlemesi: kısmi bir bölümü (gelen satırlar/gruplar) bir "Loading… N row" başlığıyla çiz.
+  // secState'i DEĞİŞTİRMEZ (değişiklik-vurgusu/önceki durak tabanı korunur); filtre/detay son boyamada uygulanır.
+  function paintStream(name, sec) {
+    const body = bodyEl(name); if (!body || !sec) return;
+    const st = secState[name];
+    const grouped = !!sec.grouped;
+    const allRows = grouped ? (sec.groups || []).reduce(function (a, g) { return a.concat(g.rows || []); }, []) : (sec.rows || []);
+    const n = allRows.length;
+    if (st && st.view === 'graph') { const c0 = cntElOf(name); if (c0) c0.textContent = n + '…'; return; }   // graph: yalnız son halde çizilir
+    const order = Array.isArray(sec.columnsAll) ? sec.columnsAll : [];
+    const hidden = Array.isArray(sec.hidden) ? sec.hidden : [];
+    const cols = order.filter(function (l) { return hidden.indexOf(l) === -1; });
+    const numCols = numericCols(cols, allRows);
+    const sortCol = st ? st.sortCol : null, sortDir = (st && st.sortDir) ? st.sortDir : 'asc';
+    const colBase = (st && st.colBase) ? st.colBase : {};
+    const opts = { numCols: numCols, colBase: colBase, bars: sec.bars || {}, links: sec.links || {}, badges: sec.badges || {}, valueMap: sec.valueMap || {}, flags: sec.flags || {}, sortCol: sortCol };
+    const banner = '<div class="summary loading">Loading… ' + n + ' row' + (n === 1 ? '' : 's') + '</div>';
+    let table;
+    if (grouped && !(st && st.flat)) table = buildGroupedTable(cols, sec.groups || [], (st && st.collapsed) || [], sortCol, sortDir, opts);
+    else table = buildTable(cols, allRows, sortCol, sortDir, null, opts);
+    body.innerHTML = banner + table;
+    const cnt = cntElOf(name); if (cnt) cnt.textContent = n + '…';
+  }
   function paint(name) {
     const st = secState[name];
     const body = bodyEl(name);
@@ -3672,6 +3751,10 @@ function getHtml(): string {
       clearAllUpdating();   // tüm sekme spinner'larını temizle
       setRefreshing(false); if (refreshFallback) { clearTimeout(refreshFallback); refreshFallback = null; }   // yenileme bitti
       if (m.ts) tsEl.textContent = 'updated ' + m.ts;
+    } else if (m.type === 'streamSection') {
+      // AKIŞ: bir bölümün satırları/grupları gelirken kısmi tabloyu canlı çiz (yükleme sürerken).
+      // secState'e YAZMAZ -> değişiklik-vurgusu tabanı (önceki durak) bozulmaz; son 'patchSection' yetkili çizimdir.
+      if (m.sec) paintStream(m.section, m.sec);   // spinner AÇIK kalır (patchSection kapatacak)
     } else if (m.type === 'patchSection') {
       // tek bölüm: durak akışındaki bir bölüm VEYA hedefli reveal -> bu sekme dolar/çizilir
       if (m.sec) { renderSection(m.section, m.sec); paint(m.section); buildColsMenu(m.section); recomputeChanged(); }

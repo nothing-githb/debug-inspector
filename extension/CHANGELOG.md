@@ -2,6 +2,19 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.72.0] - 2026-06-19
+
+### Added
+- **Progressive (per-row) section rendering.** A section's rows used to appear only once the *whole*
+  section finished fetching — slow for large or grouped sections, since every GDB access is serialized.
+  Now rows are **streamed as they arrive**: the table (header + bars/links/badges) shows up immediately
+  and fills in live, with a pulsing **`⟳ Loading… N rows`** banner (and the tab spinner) signalling that
+  the fetch is still in progress. Flat sections stream per row; grouped sections stream per group.
+  Updates are throttled (~80 ms) so the stream never floods the panel. The streaming preview is purely
+  cosmetic — the authoritative render still arrives at the end, so **change-highlighting, sorting,
+  filters, and on-demand details are unaffected** (the change baseline is the previous *completed* stop,
+  not a partial frame). Graph-view sections render once at completion (no partial graph).
+
 ## [0.71.0] - 2026-06-19
 
 ### Added
