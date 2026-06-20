@@ -530,6 +530,36 @@ function structMember(map: Record<string, string> | null, path: string): string 
   }
   return v;
 }
+// PERF: 'when' koşulunu, zaten çekilmiş struct blob'undan değerlendirmeyi dene (satır başına ayrı 'print' yerine).
+// Yalnız GÜVENLİ alt küme: (a) çıplak üye "locked" -> condTrue(blob.locked); (b) "${expr}.locked == 0" gibi
+// üye-vs-TAMSAYI-SABİTİ karşılaştırması (üye düz ondalık int ise). Çözülemezse undefined -> çağıran GDB'ye düşer.
+function evalWhenFromBlob(whenExpr: string, parsed: Record<string, string> | null): boolean | undefined {
+  if (!parsed) return undefined;
+  const w = (whenExpr ?? '').trim();
+  // (a) çıplak düz üye (ad / iç-içe ad) -> truthiness (int/enum/0x0 hepsi condTrue ile GDB ile aynı sonucu verir)
+  if (isPlainExpr(w)) {
+    const m = structMember(parsed, w);
+    return m === undefined ? undefined : condTrue(cleanValue(m));
+  }
+  // (b) ${expr}.üye / ${expr}->üye / çıplak üye  <op>  <tamsayı sabiti>
+  const cmp = w.match(/^(?:\$\{expr\}(?:\.|->))?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*(==|!=|<=|>=|<|>)\s*(-?\d+)$/);
+  if (cmp) {
+    const m = structMember(parsed, cmp[1]);
+    if (m === undefined) return undefined;
+    const lhsRaw = cleanValue(m).trim();
+    if (!/^-?\d+$/.test(lhsRaw)) return undefined;   // hex/pointer/enum-adı -> GDB'ye düş (yanlış yorumlama riski yok)
+    const lhs = parseInt(lhsRaw, 10), rhs = parseInt(cmp[3], 10);
+    switch (cmp[2]) {
+      case '==': return lhs === rhs;
+      case '!=': return lhs !== rhs;
+      case '<':  return lhs < rhs;
+      case '>':  return lhs > rhs;
+      case '<=': return lhs <= rhs;
+      case '>=': return lhs >= rhs;
+    }
+  }
+  return undefined;
+}
 
 // Bir satırın alanlarını topla. #5: >=2 düz-üye alan varsa elemanı TEK 'print' ile çekip
 // parse eder (eşleşmezse alan-alan fallback). when/wrap/bar/${expr}/computed alanlar her zaman alan-alan.
@@ -552,7 +582,12 @@ async function collectRowFields(
     parsed = parseStruct((await gdbExec(session, `print ${blobExpr}`, frameId)).toString());
   }
   for (const f of fields) {
-    if (f.when && !condTrue(cleanValue(await gdbExec(session, `print ${resolveFieldExpr(f.when, rawElem, wrapElem, access, index, depth, master)}`, frameId)))) { row[f.label] = ''; continue; }
+    if (f.when) {
+      // PERF: önce blob'dan çöz (çıplak üye / üye-vs-int); çözülemezse ayrı 'print' (eski yol)
+      let wv = evalWhenFromBlob(f.when, parsed);
+      if (wv === undefined) wv = condTrue(cleanValue(await gdbExec(session, `print ${resolveFieldExpr(f.when, rawElem, wrapElem, access, index, depth, master)}`, frameId)));
+      if (!wv) { row[f.label] = ''; continue; }
+    }
     let accExpr = resolveFieldExpr(f.expr, rawElem, wrapElem, access, index, depth, master);
     if (f.wrap) accExpr = subVars(f.wrap.split('${expr}').join('(' + accExpr + ')'));
     let val: string | undefined;

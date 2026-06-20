@@ -2,6 +2,20 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.72.1] - 2026-06-20
+
+### Performance
+- A **conditional field (`when`) is now evaluated from the row's struct blob** instead of issuing a
+  **separate GDB `print` per conditional field per row**. Since every GDB access is serialized through a
+  mutex, the round-trip count dominates load time; this removes one round-trip for each `when` field
+  whose condition is resolvable from the already-fetched blob — a **bare member** (`when: "locked"`) or a
+  **member-vs-integer comparison** (`when: "${expr}.locked == 0"`). For the demo `mutexes` section
+  (6 rows × 2 conditional fields) that is **~12 fewer serialized GDB calls per stop**. The fast path is
+  strictly guarded (plain integer member vs integer literal, or bare-member truthiness) and **falls back
+  to the original `print` for anything else** (enum-name comparisons, cross-object/`${master}` conditions,
+  members absent from the blob), so displayed values are unchanged. Same idea as the 0.70.2 bar-max
+  optimization, applied to `when`.
+
 ## [0.72.0] - 2026-06-19
 
 ### Added
