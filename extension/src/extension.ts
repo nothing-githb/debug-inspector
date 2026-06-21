@@ -561,6 +561,22 @@ function evalWhenFromBlob(whenExpr: string, parsed: Record<string, string> | nul
   return undefined;
 }
 
+// ---------------------------------------------------------------------------
+// PERF sayaçları — kaydedilen GDB round-trip'lerini logla (GDB seri olduğundan aynı anda tek bölüm
+// kurulur -> modül düzeyi sayaç güvenli). Bölüm başında sıfırla, sonunda debug; yenileme sonunda info.
+// ---------------------------------------------------------------------------
+const perf = { fieldsFromBlob: 0, blobPrints: 0, whenFromBlob: 0, barFromBlob: 0 };
+let perfRefreshSaved = 0;
+function perfSectionStart() { perf.fieldsFromBlob = 0; perf.blobPrints = 0; perf.whenFromBlob = 0; perf.barFromBlob = 0; }
+function perfSectionEnd(name: string) {
+  // tasarruf = (blob'dan okunan düz alan) - (blob print sayısı) + when-from-blob + bar-from-blob
+  const saved = Math.max(0, perf.fieldsFromBlob - perf.blobPrints) + perf.whenFromBlob + perf.barFromBlob;
+  if (saved > 0) {
+    perfRefreshSaved += saved;
+    log.debug(`perf "${name}": ~${saved} fewer GDB round-trip(s) — blob-batched ${perf.fieldsFromBlob} field(s) via ${perf.blobPrints} blob print(s), ${perf.whenFromBlob} when-from-blob, ${perf.barFromBlob} bar-max-from-blob`);
+  }
+}
+
 // Bir satırın alanlarını topla. #5: >=2 düz-üye alan varsa elemanı TEK 'print' ile çekip
 // parse eder (eşleşmezse alan-alan fallback). when/wrap/bar/${expr}/computed alanlar her zaman alan-alan.
 async function collectRowFields(
@@ -580,12 +596,14 @@ async function collectRowFields(
   if (plainCount >= 2) {
     const blobExpr = access === '->' ? `*(${wrapElem})` : `(${wrapElem})`;
     parsed = parseStruct((await gdbExec(session, `print ${blobExpr}`, frameId)).toString());
+    perf.blobPrints++;
   }
   for (const f of fields) {
     if (f.when) {
       // PERF: önce blob'dan çöz (çıplak üye / üye-vs-int); çözülemezse ayrı 'print' (eski yol)
       let wv = evalWhenFromBlob(f.when, parsed);
       if (wv === undefined) wv = condTrue(cleanValue(await gdbExec(session, `print ${resolveFieldExpr(f.when, rawElem, wrapElem, access, index, depth, master)}`, frameId)));
+      else perf.whenFromBlob++;   // blob'dan çözüldü -> ayrı 'print' yok
       if (!wv) { row[f.label] = ''; continue; }
     }
     let accExpr = resolveFieldExpr(f.expr, rawElem, wrapElem, access, index, depth, master);
@@ -593,7 +611,7 @@ async function collectRowFields(
     let val: string | undefined;
     if (parsed && !f.wrap && !f.symbol && isPlainExpr(f.expr)) {
       const m = structMember(parsed, f.expr);
-      if (m !== undefined) val = cleanValue(m);                 // batch'ten
+      if (m !== undefined) { val = cleanValue(m); perf.fieldsFromBlob++; }   // batch'ten (ayrı 'print' yok)
     }
     if (val === undefined) {
       if (f.symbol) val = symbolizeAddr(cleanValue(await gdbExec(session, `print/a ${accExpr}`, frameId)));   // adres -> 'func+off' sembolü
@@ -614,7 +632,7 @@ async function collectRowFields(
         let bv: string | undefined;
         if (/^\d+$/.test(mx)) bv = mx;   // sabit max
         // PERF: bar max düz bir üye ise (örn stack_size) zaten çekilmiş struct blob'undan oku -> satır başına ekstra 'print' turu YOK
-        else if (parsed && isPlainExpr(mx)) { const pm = structMember(parsed, mx); if (pm !== undefined) bv = cleanValue(pm); }
+        else if (parsed && isPlainExpr(mx)) { const pm = structMember(parsed, mx); if (pm !== undefined) { bv = cleanValue(pm); perf.barFromBlob++; } }
         if (bv === undefined) bv = cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index, depth, master)}`, frameId));
         row['__bar__' + f.label] = bv;
       }
@@ -1025,8 +1043,10 @@ async function buildSection(
   // GDB gerektirmeyen sunum meta'sı (kolonlar + çubuk/link/rozet/...) — bir kez hesapla, hem akışta hem son halde kullan.
   const meta = { columnsAll: eff.order, hidden: eff.hidden, bases: fieldBases(cfg.fields), bars: fieldBars(cfg.fields), links: fieldLinks(cfg.fields), badges: fieldBadges(cfg.fields), valueMap: fieldValueMap(cfg.fields), flags: fieldFlags(cfg.fields), kind };
   const onProgress = onStream ? (rs: Row[]) => onStream({ name, ...meta, rows: rs.slice(), summary: '' }) : undefined;
+  perfSectionStart();
   const rows = await collectSection(session, { ...cfg, fields: effFields }, frameId, cursor, name, isStale, undefined, onProgress);
   log?.debug(`section "${name}" (${cfg.mode}, root=${cfg.root}): ${rows.length} row(s); active=[${eff.active.join(', ')}]`);
+  perfSectionEnd(name);
   return { name, ...meta, rows, summary: summarize(name, rows) };
 }
 
@@ -1134,6 +1154,7 @@ async function buildGrouped(
   }
   const masterAcc = m.cfg.mode === 'array' ? (m.cfg.access ?? '.') : '->';
   const groups: Group[] = [];
+  perfSectionStart();
   let lastEmit = 0;
   const emit = () => { if (!onStream || !groups.length) return; const now = Date.now(); if (now - lastEmit >= 80) { lastEmit = now; onStream({ name, ...meta, rows: [], groups: groups.slice(), summary: '' }); } };
   for (let mi = 0; mi < m.sec.rows.length; mi++) {
@@ -1161,6 +1182,7 @@ async function buildGrouped(
   }
   const total = groups.reduce((a, g) => a + g.rows.length, 0);
   log?.debug(`grouped "${name}" by ${scfg.groupBy}: ${groups.length} group(s), ${total} row(s)`);
+  perfSectionEnd(name);
   return { name, ...meta, rows: [], summary: `${total} ${name} · ${groups.length} ${scfg.groupBy}`, groups };
 }
 
@@ -1232,6 +1254,7 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
   lastFingerprint = fingerprintOf(secs, lay);   // sonraki config değişimini "veri mi sunum mu" diye karşılaştırmak için taban
   const ts = new Date().toLocaleTimeString();
   log?.info(`refresh: ${secs.length} section(s); visible=[${visible.join(', ')}] active=${activeTab ?? '-'}`);
+  perfRefreshSaved = 0;   // bu yenilemede kaydedilen round-trip'leri say (bölümler perfSectionEnd ile ekler)
 
   // iskeleti hazırla (ts + layout + kaldırılanları temizle); bölümler aşağıda ÖNCELİKLİ akışla gelir
   panel.webview.postMessage({ type: 'beginUpdate', order, visible, hiddenSections: order.filter(n => hiddenSet.has(n)), details: detailMap, ts });
@@ -1273,6 +1296,7 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
     if (!built.has(next)) sendSec(next, sec);
   }
   if (stale()) return;
+  if (perfRefreshSaved > 0) log?.info(`perf: ~${perfRefreshSaved} fewer GDB round-trip(s) this refresh (blob batch + when/bar-max from blob)`);
   panel.webview.postMessage({ type: 'endUpdate', ts });   // akış bitti -> webview aktif sekmeyi son kez boyar (çapraz-link çözülür)
 }
 

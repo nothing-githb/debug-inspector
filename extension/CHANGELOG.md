@@ -2,6 +2,16 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.72.2] - 2026-06-21
+
+### Added
+- **The output log now reports how many GDB round-trips the batching optimizations saved.** At the
+  default `info` level, each refresh ends with a one-line summary — e.g. `perf: ~37 fewer GDB
+  round-trip(s) this refresh (blob batch + when/bar-max from blob)`. At `debug` level each section also
+  logs a breakdown: how many plain fields were served from the single struct blob, plus the
+  `when`-from-blob and `bar-max`-from-blob savings. Makes the otherwise-invisible optimizations
+  observable (open **Debug Inspector: Show Log**). No behavior change to the data.
+
 ## [0.72.1] - 2026-06-20
 
 ### Performance
