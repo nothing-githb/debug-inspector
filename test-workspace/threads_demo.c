@@ -238,6 +238,13 @@ static void inspect_point(int tick)
 /* 0x4000=16384 stack'in kullanim yuzdesi (usage bar: yesil/yesil/sari/kirmizi) */
 static const unsigned long STACK_USED[4] = { 0x1000, 0x2a00, 0x3300, 0x3d00 }; /* 25/65/80/95% */
 
+/* BUYUK struct: "tum elemani cek + alanlari parse et" (blob) yontemini, sadece birkac kucuk alan gosterilen
+   GENIS bir struct'ta olcmek icin. data[] her elemanda FARKLI degerlerle dolu -> GDB <repeats> ile
+   sikistiramaz, yani 'print *elem' GERCEKTEN buyuk bir blob doner (hedefli okumayla karsilastirma). */
+typedef struct { int id; char name[16]; unsigned int data[1024]; } big_t;
+big_t g_bigs[8];
+int g_big_count = 8;
+
 int main(void)
 {
     /* ---- process'ler + her birinin thread/sem alt listeleri (gruplu ağaç) ---- */
@@ -354,6 +361,13 @@ int main(void)
                 default: g_threads[i].cs_fp = 0UL;                  break;   /* callstack yok */
             }
         }
+    }
+
+    /* g_bigs'i FARKLI degerlerle doldur (sikistirilamaz) -> blob gercekten buyuk olur */
+    for (int i = 0; i < g_big_count; i++) {
+        g_bigs[i].id = 1000 + i;
+        g_bigs[i].name[0] = 'B'; g_bigs[i].name[1] = (char)('0' + i); g_bigs[i].name[2] = '\0';
+        for (int j = 0; j < 1024; j++) g_bigs[i].data[j] = (unsigned)(i * 100000 + j * 7 + 1);
     }
 
     for (int tick = 0; tick < 3; tick++) {

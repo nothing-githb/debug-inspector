@@ -160,6 +160,19 @@
     ]
   },
 
+  "//bigs": "GENİŞ struct (big_t: id + name + data[1024]). Sadece ID/Name gösterilir ama eleman çok büyük -> 'tüm elemanı çek' (blob) yöntemi burada zarara döner. Uyarlamalı blob koruması: ilk satırda blob taşınan-karakter/kullanılan-alan oranını ölçer, yüksekse kalan satırlarda blob'u kapatıp hedefli okur. hidden:true (örnek/ölçüm için).",
+  "bigs": {
+    "mode": "array",
+    "root": "g_bigs",
+    "count": "g_big_count",
+    "access": ".",
+    "hidden": true,
+    "fields": [
+      { "label": "ID",   "expr": "id" },
+      { "label": "Name", "expr": "name" }
+    ]
+  },
+
   "//callstack": "TALEP-ÜZERİNE DETAY (selectedFrom + ${selected}) + walk modu + cast. SEKME DEĞİL: 'threads' tablosunda/graph'ında bir thread satırını sağ-tıklayıp 'Show Callstack (detail)' seçilince kurulur (tabloda satırın altına açılır; graph'ta detay paneli genişler). Her durakta tazelenir. 'cast':'frame_t *' kürsörü tipler -> ${wrapped_expr} = ((frame_t *)(FP)); böylece ham pointer aritmetiği yerine ${wrapped_expr}->pc / ->prev yazılır (${expr} hâlâ HAM FP değeri, sınır kontrolü/aritmetik için). start=seçilen thread'in FP'si (${selected}->cs_fp); next=önceki FP (${wrapped_expr}->prev); while=FP stack sınırında kaldıkça sür; PC=${wrapped_expr}->pc (x86-64 dönüş adresi). 'Func' kolonu PC'yi 'symbol':true ile çözer (print/a -> hangi fonksiyon). Sentetik veri: tcb_t.cs_fp + g_cs_stack, dönüş adresleri GERÇEK fonksiyon adresleri (her thread'e farklı zincir).",
   "ss": {
     "mode": "walk",

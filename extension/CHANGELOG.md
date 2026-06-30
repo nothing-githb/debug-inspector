@@ -2,6 +2,26 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.72.3] - 2026-06-21
+
+### Fixed
+- **An anonymous `union`/`struct` member no longer corrupts the field before it.** When GDB prints an
+  unnamed aggregate (`{a = 1, {x = 2, y = 3}, b = 4}`), the parser used to append it to the preceding
+  member — so `a` silently became `1, {x = 2, y = 3}` and was shown as-is (no fallback). The anonymous
+  part is now skipped; `a`/`b` stay clean and the inner fields fall back to a targeted `print` (correct
+  value) if displayed.
+
+### Performance
+- **Adaptive "whole element" (blob) reads.** Fetching the entire struct once and parsing out fields is a
+  big win for normal structs, but a **loss for a wide struct where you only show a couple of fields** —
+  measured ~**34× slower** for a `struct { int id; char name[16]; unsigned data[1024]; }` showing just
+  `id`/`name` (2.4 ms vs 0.07 ms per row in-process; and worse over a remote stub, since the blob makes
+  GDB read the whole struct's bytes over the link). The extension now decides **per section, on the first
+  row**: if the blob carries far more than the displayed fields use (chars-per-used-field over a
+  threshold) — or doesn't parse — it **disables the blob for the rest of that section and reads targeted
+  fields instead**. Normal/wide-but-scalar structs keep the blob (still saves round-trips); only the
+  wasteful wide-array case falls back. Logged at `debug`.
+
 ## [0.72.2] - 2026-06-21
 
 ### Added

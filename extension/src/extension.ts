@@ -409,6 +409,7 @@ async function refreshRow(section: string, rowIndex: number | null) {
     rawElem = e; access = '->';
   }
   const elem = scfg.wrap ? '(' + scfg.wrap.split('${expr}').join('(' + rawElem + ')') + ')' : rawElem;
+  blobGuard = { off: false, decided: false, len: 0, resolved: 0 };   // tek-satır yenileme: bölüm dışı bayat blob kararı sızmasın
   const row = await collectRowFields(session, effFields, frameId, rawElem, elem, access, rawElem, elem, scfg.mode === 'array' ? rowIndex : undefined);   // ${index} sadece array'de (linked'de gerçek dizi index'i yok)
   log?.debug(`refreshRow: ${section}[${rowIndex}] -> ${Object.keys(row).filter(k => k.indexOf('__') !== 0).length} field(s)`);
   panel.webview.postMessage({ type: 'patchRow', section, rowIndex, row });
@@ -516,7 +517,11 @@ function parseStruct(blob: string): Record<string, string> | null {
   for (const p of parts) {
     const m = p.match(/^\s*([A-Za-z_]\w*)\s*=\s*([\s\S]*)$/);
     if (m) { map[m[1]] = m[2].trim(); last = m[1]; }
-    else if (last) { map[last] += ',' + p; }   // virgüllü değerin devamı (char dizisi/<repeats>)
+    // ANONİM üye (isimsiz union/struct: "{x = 2, y = 3}") -> önceki üyeyi BOZMA, atla. (Eskiden 'last'a eklenip
+    // bir önceki alanı sessizce bozuyordu; o alan blob'dan yanlış okunup fallback de etmiyordu.) Bu alanlar zaten
+    // ada göre adreslenmez; gösterilirse structMember miss -> hedefli 'print' fallback'i doğru değeri getirir.
+    else if (/^\s*\{/.test(p)) { /* skip */ }
+    else if (last) { map[last] += ',' + p; }   // virgüllü değerin GERÇEK devamı (char dizisi / <repeats>)
   }
   return map;
 }
@@ -577,6 +582,18 @@ function perfSectionEnd(name: string) {
   }
 }
 
+// "Tüm elemanı çek + parse et" (blob) yöntemi GENİŞ struct'larda zarara döner: gösterilmeyen bir büyük dizi
+// blob'u devasa yapar; GDB tüm struct'ı (yavaş hatta tüm baytları) okuyup biçimler. Ölçüm: id+name gösterilen
+// data[1024]'lük bir struct'ta blob ~34x daha yavaş (2.4ms vs 0.07ms/satır, yerelde). Bu yüzden UYARLAMALI:
+// bölümün ilk satırında blob'u dene; KULLANILAN alan başına çok fazla karakter taşıyorsa (yani çoğu boşa),
+// kalan satırlarda blob'u kapat → hedefli oku. Hata-payı bağımsız: oran "ne kadarını boşa taşıdığını" ölçer.
+const BLOB_CHARS_PER_FIELD_MAX = 200;   // blob uzunluğu / blob'dan çözülen alan sayısı bu eşiği aşarsa blob kapatılır
+function blobTooLarge(blobLen: number, resolved: number): boolean {
+  return resolved <= 0 ? true : (blobLen / resolved) > BLOB_CHARS_PER_FIELD_MAX;
+}
+// Bölüm boyu blob kararı (GDB seri -> modül düzeyi güvenli). collectSection başında sıfırlanır; ilk satırda karar verilir.
+let blobGuard = { off: false, decided: false, len: 0, resolved: 0 };
+
 // Bir satırın alanlarını topla. #5: >=2 düz-üye alan varsa elemanı TEK 'print' ile çekip
 // parse eder (eşleşmezse alan-alan fallback). when/wrap/bar/${expr}/computed alanlar her zaman alan-alan.
 async function collectRowFields(
@@ -592,10 +609,13 @@ async function collectRowFields(
   const row: Row = {};
   row['__el__'] = editWrap;   // satırın KARARLI eleman ifadesi -> "watch ifadesi olarak kopyala" (tüm modlarda geçerli)
   let parsed: Record<string, string> | null = null;
+  let blobLen = 0, blobResolved = 0;
   const plainCount = fields.filter(f => isPlainExpr(f.expr) && !f.wrap && !f.symbol).length;   // symbol alanı print/a ister -> batch dışı
-  if (plainCount >= 2) {
+  if (plainCount >= 2 && !blobGuard.off) {   // blobGuard.off: bu bölümde blob GENİŞ bulundu -> hedefliye düşüldü
     const blobExpr = access === '->' ? `*(${wrapElem})` : `(${wrapElem})`;
-    parsed = parseStruct((await gdbExec(session, `print ${blobExpr}`, frameId)).toString());
+    const raw = (await gdbExec(session, `print ${blobExpr}`, frameId)).toString();
+    blobLen = raw.length;
+    parsed = parseStruct(raw);
     perf.blobPrints++;
   }
   for (const f of fields) {
@@ -611,7 +631,7 @@ async function collectRowFields(
     let val: string | undefined;
     if (parsed && !f.wrap && !f.symbol && isPlainExpr(f.expr)) {
       const m = structMember(parsed, f.expr);
-      if (m !== undefined) { val = cleanValue(m); perf.fieldsFromBlob++; }   // batch'ten (ayrı 'print' yok)
+      if (m !== undefined) { val = cleanValue(m); perf.fieldsFromBlob++; blobResolved++; }   // batch'ten (ayrı 'print' yok)
     }
     if (val === undefined) {
       if (f.symbol) val = symbolizeAddr(cleanValue(await gdbExec(session, `print/a ${accExpr}`, frameId)));   // adres -> 'func+off' sembolü
@@ -636,6 +656,15 @@ async function collectRowFields(
         if (bv === undefined) bv = cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index, depth, master)}`, frameId));
         row['__bar__' + f.label] = bv;
       }
+    }
+  }
+  // UYARLAMALI blob kararı: ilk blob'lu satırda, taşınan karakter / kullanılan alan oranı yüksekse (geniş struct,
+  // çoğu boşa) kalan satırlarda blob'u kapat -> hedefli oku. Bir kez karar verilir, bölüm sonuna kadar geçerli.
+  if (blobLen > 0 && !blobGuard.decided) {
+    blobGuard.decided = true;
+    if (blobTooLarge(blobLen, blobResolved)) {
+      blobGuard.off = true; blobGuard.len = blobLen; blobGuard.resolved = blobResolved;
+      log.debug(`perf: blob too wide (${blobLen} chars / ${blobResolved} field(s) used per row) → targeted reads for this section's remaining rows`);
     }
   }
   return row;
@@ -698,6 +727,7 @@ async function collectSection(
 ): Promise<Row[]> {
   const rows: Row[] = [];
   const max = cfg.max ?? 1024;
+  blobGuard = { off: false, decided: false, len: 0, resolved: 0 };   // bölüm başı: blob kararını sıfırla (ilk satırda yeniden verilir)
   // Akış: her satırdan sonra, en çok ~her STREAM_MS bir kez, o ana kadarki satırları yayınla (postMessage selini önler).
   let lastEmit = 0;
   const emit = () => { if (!onProgress || !rows.length) return; const now = Date.now(); if (now - lastEmit >= 80) { lastEmit = now; onProgress(rows); } };
