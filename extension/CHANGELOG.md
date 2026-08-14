@@ -2,6 +2,451 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.92.0] - 2026-07-17
+
+### Added
+- **Show all / Hide all in both the Sections and Columns menus.** One click opens or closes every
+  tab/column. Sections' *Hide all* keeps the active tab visible (the panel never goes empty); Columns'
+  keeps the first visible column. *Show all* refetches only what was hidden — newly shown sections are
+  re-read in one message (the `reveal` protocol now carries a list), and showing all columns rebuilds
+  just that section.
+- **Right-click a tab to manage sections.** Right-clicking a tab opens the Sections menu at the cursor —
+  the exact counterpart of right-clicking a column header for the Columns menu. Sections and columns now
+  share the same interaction language: drag to reorder (tab/header or menu row), right-click for options,
+  checkboxes + Show all/Hide all in the menu.
+
+### Fixed
+- The multi-section reveal loop respects live state: a new stop / resume cancels the remaining fetches, a
+  section re-hidden while the list is loading is skipped (hidden sections are never read from GDB), and one
+  failing section no longer strands the rest at *Loading…* (it shows an explicit ⚠ instead). A targeted
+  whole-section rebuild also re-applies the **current** column preferences when it lands, so hiding columns
+  while a rebuild is in flight is no longer reverted by the stale snapshot.
+
+## [0.91.0] - 2026-07-14
+
+### Changed
+- **The panel opens as a full-width tab in the active editor group, not a split.** *Open Panel* used
+  `ViewColumn.Beside`, which split the editor in two (the "half window"). It now opens with
+  `ViewColumn.Active` — a full-width editor tab you switch to — leaving your editor layout untouched.
+  Reopening an already-open panel just brings it to the front of whatever column it currently lives in
+  (you can still drag it beside your code yourself if you prefer that layout).
+
+## [0.90.3] - 2026-07-14
+
+### Changed
+- **`timeline.set.dashWhen` constant handling refined.** Only `true`/`false` are now a no-GDB constant —
+  GDB's C mode doesn't know the identifiers `true`/`false`, so they can't be evaluated and must be resolved
+  in-process. A literal `1`/`0` is instead evaluated as an ordinary, element-independent GDB expression
+  **once** and applied to the whole set (previously `1`/`0` were also short-circuited as constants). The
+  accessor (`"off"`) and `"${expr}"` forms are unchanged (per-element). The net effect for `1`/`0` is the
+  same (all/none dashed) — just resolved the way GDB naturally evaluates them.
+
+## [0.90.2] - 2026-07-14
+
+### Changed
+- **A single timeline `set` now shows its `title` caption too.** The per-group caption previously appeared
+  only when a block had ≥ 2 sets; a lone set's `title` lived only in the tooltip. Now any set with a `title`
+  gets a small caption to the left of its chips (a title-less set still shows none).
+
+## [0.90.1] - 2026-07-14
+
+### Changed
+- **`timeline.set.dashWhen` accepts a literal constant.** Writing `"dashWhen": 1` / `"0"` (or `true` /
+  `false`) now dashes **all** (or none) of that set's chips with no per-element GDB read. Previously a bare
+  `1`/`0` was mistaken for a field accessor (`(elem).1`), which errored and silently evaluated to false. The
+  accessor form (`"off"`) and the `"${expr}"` expression form are unchanged.
+
+## [0.90.0] - 2026-07-14
+
+### Added
+- **Multiple sub-arrays per timeline block (`timeline.set` may be an array).** `set` now accepts either a
+  single set object (as before) or an **array** of them, so a block can carry several id-sets at once — e.g.
+  a device list *and* a signal list. Each set renders as its own chip row inside the block; when there are
+  ≥ 2 sets, each row is prefixed with that set's `title` as a caption (e.g. `dev` / `sig`). Every set keeps
+  its own `label` / `dashWhen` / overflow (`+N`) / `max`, and the tooltip and click-detail card list each
+  set separately. A single set object renders exactly as before (no caption). Demo: the `sched` timeline now
+  shows each window's `dev` and `sig` sets on separate rows.
+
+## [0.89.0] - 2026-07-14
+
+### Added
+- **Conditional dashed borders on device chips (`timeline.set.dashWhen`).** A `dashWhen` expression on a
+  timeline `set` is evaluated **per device element** — an accessor like `"off"`, or a `"${expr}"` template
+  where `${expr}` is the device element (e.g. `"${expr}.flags & 1"`). When it's truthy (same
+  empty/`0`/`false`/NULL → false rule as a field's `when`), that device's chip is drawn with a **dashed**
+  border, in both the timeline block and the click-detail card. Demo: the `sched` timeline marks offline
+  devices (`"dashWhen": "off"`) with dashed chips (adc1, imu, can0).
+
+## [0.88.0] - 2026-07-14
+
+### Added
+- **Click a timeline block for a detail card.** Clicking any block (part/window) opens a docked card below
+  the timeline listing *all* of that block's fields — decoded exactly like the graph node panel (`badge` /
+  `valueMap` / `flags` text and colors, raw integer in parentheses) — plus its device set (`timeline.set`)
+  as chips. Click the block again or the ✕ to close; the open card survives a re-render (e.g. zoom).
+- **Legend caption naming the color field.** The timeline legend now leads with the name of the field the
+  colors encode (e.g. `Part:`), so it's clear what the swatches mean rather than leaving it implied.
+- **Optional total label (`timeline.totalLabel`).** In positioned mode you can give the axis total a caption
+  — `"totalLabel": "major frame"` renders `major frame: 200 ms` on the axis (and in a split chart's title).
+  With no `totalLabel`, nothing is assumed — the axis shows just the number and unit as before.
+
+## [0.87.1] - 2026-07-14
+
+### Changed
+- **`timeline.set` group title is yours to name (`set.title`).** The device-set line in a block's tooltip
+  previously hard-coded the word "devices". It now uses `set.title` from config; with no title given, the
+  tooltip shows just `(N): …` and assumes no name.
+
+### Added
+- **`timeline.set` auto-fits when a block has too many chips.** After render, chips that don't fit inside a
+  block are collapsed into a trailing `+N` badge (the full set always stays in the tooltip). Zooming the
+  timeline wider re-flows and reveals more chips. A block with many devices no longer clips them out of sight.
+
+## [0.87.0] - 2026-07-14
+
+### Added
+- **Per-block device sets in the timeline (`timeline.set`).** A timeline block (e.g. a scheduling
+  window / partition) can now carry a *second* array — a set of ids read off that block's own element —
+  rendered as chips inside the block. Configure it under the section's `timeline`:
+  ```json
+  "timeline": { "start": "Start", "width": "Dur", "total": 100, "unit": "ms",
+                "set": { "array": "devs", "count": "ndev", "access": ".", "label": "name" } }
+  ```
+  For each block element, `array` and `count` are resolved relative to it — accessor (`"devs"`),
+  constant, `"::global"`, or a `"${expr}"` template (use `"${expr}->…"` when the element is a pointer) —
+  and each sub-element's `label` field (or the element itself when `label` is omitted) becomes a chip;
+  `access` is the sub-element accessor (`.`/`->`) and `max` caps the count (default 64). Wide blocks list
+  every id; narrow blocks crop with an ellipsis and the full set is always in the block's tooltip. The
+  sub-arrays are fetched server-side per block (via each row's stable element expression) and shipped with
+  the section, so switching to the timeline view needs no re-fetch. Demo: the `sched` timeline shows each
+  partition window's device set (e.g. `NAV → gps, imu, mag`).
+
+## [0.86.3] - 2026-07-12
+
+### Fixed
+- **Cross-reference links (`field.link`) now work in on-demand detail sections (`selectedFrom`).** The extension
+  already computed the links for detail fields (`buildSection`/`buildArrayNd` attach them), and the `.xref`
+  click handler is delegated on the panes container so a click inside a detail accordion was always caught —
+  but the detail mini-table renderer (`detSubTable`) passed `links: {}`, silently dropping them (every other
+  presentation attribute — base, bar, badge, valueMap, sourceLine — was already honored; only `link` was
+  missed). It now passes `sec.links`, so a linked cell in a detail section renders as a clickable cross-reference
+  that jumps to the matching row in the target section, exactly like a top-level table. Demo: the **MutexAt**
+  detail now has an `Owner` field linking to the `threads` section by `ID`.
+
+## [0.86.2] - 2026-07-12
+
+### Fixed
+- **Stray refresh after resume (rapid re-stop → continue).** `cancelRefresh()` (fired on the debugger
+  `continued` event) bumped the refresh generation and cleared the debounce timer but did **not** reset the
+  queued `pendingRefresh` flag. So if a second stop had queued a follow-up refresh while a first refresh was
+  still in flight, the run-loop would fire **one more full refresh after the program had already resumed** —
+  evaluating expressions on a running program (stale data / ⚠ cells). `cancelRefresh()` now also clears
+  `pendingRefresh`, so resuming reliably ends refresh activity. The legitimate coalesced re-run (a second stop
+  with no resume) is unaffected.
+- **Skeleton flash from a superseded refresh.** `refresh()` posted its `beginUpdate` (which clears the panel
+  to a skeleton) with no staleness check — the first check came only inside the section-streaming loop, *after*
+  the panel had already been wiped. A refresh that was superseded during its `stackTrace`/print-setup awaits
+  (e.g. by a `continued` or a newer request) could therefore blank the panel and then bail with no `endUpdate`.
+  A `stale()` guard now runs immediately before `beginUpdate`, so a superseded run never wipes the panel.
+- New deterministic unit test of the coalescing state machine (`test-refresh-machine.js`, gate step 26): a
+  verbatim copy of `doRefresh`/`cancelRefresh`/`runRefresh`/`gdbAcquire` driven with a fake timer and a
+  hold-able `refresh()`, asserting single=1, debounce-coalesce=1, legitimate pending re-run=2, cancel-clears-
+  pending=1 (the fix above), and pre-debounce cancel=0. This isolates a race the live-GDB harness cannot force
+  deterministically. These two fixes surfaced from an adversarial audit proving no single stop double-refreshes.
+
+## [0.86.1] - 2026-07-12
+
+### Fixed
+- **Double-load when opening the panel while already stopped.** The *Open Panel* command called
+  `refresh(...)` **directly** right after creating the webview — bypassing the debounce/generation-guard/GDB
+  mutex — while the freshly-loaded webview *also* triggers a refresh via its `ready` message. Opening the
+  panel at a breakpoint therefore ran **two full fetch passes**, and because the direct call skipped the
+  serialization mutex it could race the `ready`-triggered refresh over the shared `$ri_*` cursors (transient
+  ⚠ cells). The command now calls `doRefresh()`, which coalesces both triggers into a single serialized
+  refresh. (Panels opened before stopping, and every other trigger, were already correctly coalesced.)
+  New end-to-end regression test (`test-double-load.js`, gate step 25) counts `endUpdate` posts per trigger
+  and asserts open-while-stopped = 1 refresh (was 2), single/rapid/reload = 1, stopped-then-continued = 0.
+
+## [0.86.0] - 2026-07-04
+
+### Added
+- **Horizontal zoom for positioned timelines (− / Fit / +).** A single chart (or any chart) was always
+  fit to the pane width, so with a large `total` the blocks became tiny. The timeline toolbar now has a
+  zoom control (in positioned mode): **1× fits the width** (unchanged default), and each **+** doubles the
+  drawn width (up to 16×) so the timeline overflows the pane with horizontal scroll and small slices become
+  readable; **−** steps back down to Fit. Works for single- and multi-chart timelines and composes with
+  Normalize. Lane names are now **sticky** — they stay pinned at the left while you scroll horizontally.
+  Per-section state.
+
+## [0.85.0] - 2026-07-04
+
+### Added
+- **⤢ Normalize toggle for multi-chart timelines.** When a timeline is split into several charts
+  (`timeline.chart`), the toolbar now offers a runtime toggle between **proportional** (each chart's width
+  scaled to its `total`, true-to-scale) and **normalized** (every chart drawn at full width). Short
+  timelines that were cramped next to long ones in proportional mode become readable in one click — no
+  config edit. The button defaults to the config's `scale` and its state is per-section.
+
+## [0.84.0] - 2026-07-04
+
+### Added
+- **Multiple timelines in one section (`timeline.chart`).** A `chart` column splits a section into
+  **separate timeline charts** — one per distinct value, each with its own title and its own axis — so
+  timelines of *different lengths* are shown independently instead of forced onto one scale. With `chart`,
+  **`total` may be a column** (each chart's axis end is read from its own rows: a positive constant per
+  chart, disagreements flagged, never computed), and **`scale`** picks the layout: `"proportional"`
+  (default — a chart's pixel width is proportional to its `total`, so a 250 ms timeline is ~2.5× the width
+  of a 100 ms one) or `"fit"` (every chart spans the full width; the length difference lives only in the
+  axis numbers). Without `chart` the timeline is unchanged (single chart). Demo: new `schedules` section —
+  `boot` (100 ms) and `cruise` (250 ms) schedules, each with per-core lanes and idle gaps, drawn at
+  proportional widths.
+
+## [0.83.0] - 2026-07-04
+
+### Changed
+- **Professional timeline rendering.** Applied dataviz rules to the ⏱ view: the categorical palette is
+  replaced with an 8-slot **validated dark palette** (lightness band / chroma floor / contrast all PASS;
+  identity is never color-alone thanks to labels + legend + gaps); block labels now wear **ink**, not the
+  series color; a **lane-aligned 5-tick axis** (0/¼/½/¾/total, tabular numerals, optional `unit` such as
+  `"ms"` on the last tick) replaces the 3-label header; **recessive dashed gridlines** run through every
+  lane at the tick positions; lanes get zebra striping and stronger name typography; blocks brighten on
+  hover; and an **automatic legend** (swatch + value, capped at 12 with “+N”) appears whenever the color
+  key has ≥ 2 distinct values. Same value → same color across refreshes (entity-stable hashing).
+
+## [0.82.2] - 2026-07-04
+
+### Fixed
+- **Positioned timeline silently fell back to sequential layout — gaps and the axis never appeared.**
+  The `total` validation regex lived inside the webview's TypeScript template literal, where a single
+  backslash is consumed during template evaluation (`\d` became `d`), so a perfectly valid
+  `"total": 100` never matched and positioned mode disabled itself. Escaped properly; the whole template
+  was scanned for other mangled escapes (none left). Added a **rendered-output regression test** that
+  drives the *evaluated* webview (mock section → switch to ⏱ view) and asserts the axis with the
+  configured total, blocks placed at their `start` values (`left:40% / left:75%` → real gaps), and no
+  bogus total warning — the raw-JS syntax check alone cannot catch this class.
+
+## [0.82.1] - 2026-07-04
+
+### Changed
+- **Positioned timeline: `total` must be given in config — it is never derived from the data.** The
+  auto "(latest end)" fallback is removed: the axis end is exactly what you configure. If `start` is set
+  but `total` is missing or not a positive number, the timeline shows an explicit ⚠ notice and renders
+  the sequential layout instead (nothing is guessed).
+
+## [0.82.0] - 2026-07-04
+
+### Added
+- **Positioned timeline (`start` + `total`).** Give `timeline.start` a column and blocks are **placed on
+  the time axis by that value** instead of packing sequentially — so **gaps between executions are
+  visible**. `width` becomes the duration; lane order is implied by position. A dashed **axis header**
+  shows `0 · mid · total`; `total` may be a fixed number (`"total": 160`) or is derived automatically as
+  the latest end (labeled *(auto)*). Missing/invalid start clamps to 0 (a rule, not a guess); a fixed
+  `total` smaller than the data simply clips (track overflow is hidden). Demo: `coreSched` now uses
+  `start: "Start"`, `width: "Dur"`, `total: 160` over the new per-item `start`/`dur` fields — lanes per
+  core with visible idle gaps.
+
+## [0.81.2] - 2026-07-04
+
+### Fixed
+- **`linked_list` now has a cycle guard.** `walk` and `tree` already detected revisited nodes, but a
+  linked list that is circular (or whose `next` reads garbage that loops) crawled all the way to the
+  `max` bound (default 1024) — hundreds of serial GDB round-trips that feel like an infinite load on a
+  real target. The traversal now records each node address and stops with an explicit
+  `cycle (node 0x… repeats)` reason (visible in the log's `stopped:` line) the moment a node repeats.
+- **New release-gate test for traversal termination** (`test-linked-term`): replays the extension's exact
+  cursor-chase against real GDB and asserts the NULL stop after exactly 8 demo rows, the cycle-guard stop
+  on a circular chain, and the `max` clamp on a runaway chain — value tests existed, termination didn't.
+
+## [0.81.1] - 2026-07-04
+
+### Changed
+- **The ⏱ Timeline button is now opt-in per section.** It appears only in sections whose config has a
+  `"timeline"` key (an empty `{}` enables it with defaults: lanes from group headers, block text from the
+  first visible column). Sections without the key no longer show the button; if the key is removed while
+  a section is in timeline view, the section falls back to the table view.
+
+## [0.81.0] - 2026-07-04
+
+### Changed (BREAKING)
+- **`array2d` and `array3d` modes are removed — `nested_array` is the single multi-level mode.** They had
+  become pure aliases normalizing into the same engine; keeping three spellings of one feature cost config
+  and doc surface with no behavior difference. Migration is mechanical:
+  `root`/`count`/`access`/`label`/`cast`/`wrap` + `inner*`/`inner2*` become entries in `levels[]`
+  (outermost first, last level = the rows) — e.g. array3d's `"inner": "${expr}", "innerCount": "::g_n"`
+  is now `{ "array": "${expr}", "count": "::g_n", ... }` as `levels[1]`. All tokens are unchanged
+  (`${index}`, `${master}`/`${master_index}`, `${outer}`/`${outer_index}`, named `${<level>}` /
+  `${<level>_index}`, and the `${selected*}` detail tokens). The demo `panels` and `coreJobs` sections
+  are migrated in place. A `label` on the last (row) level now logs an explicit "ignored" warning.
+
+## [0.80.1] - 2026-07-04
+
+### Fixed (adversarial review pass over 0.80.0)
+- **Detail sections: `${selected}` / `${selected_index}` / `${selected_master_index}` / `${selected_outer_index}`
+  in FIELD expressions now resolve correctly.** They were pre-substituted into the field template; a field
+  that became token-free (e.g. `"${selected_index}"` → `"5"`) was then appended to the row element
+  (`elem.5` — a GDB syntax error). Selected values are now carried to **row time** like every other token.
+- **A section that fails to build no longer kills the whole refresh.** The refresh queue wraps each section
+  build; a failure renders an explicit ⚠ error in that tab and the remaining sections still load. Same for
+  the multi-level walk (its own try/catch) and details.
+- **Multi-level counts are bounded at every level.** A corrupt/huge intermediate count (e.g. an
+  uninitialized `0xFFFFFFFF`) used to loop for billions of GDB round-trips (only leaf rows counted toward
+  `max`); every level's iteration is now clamped by `max` too.
+- **JSON-number counts (`"innerCount": 4`) no longer throw.** Part expressions coerce numbers to strings.
+- **Level-name validation hardened:** names ending in `_index`, names whose derived `<name>_index` token
+  collides with another level or a reserved token (e.g. `selected_master`) are rejected explicitly.
+- **Timeline:** lanes named `constructor`/`__proto__` no longer break the render (prototype-safe map);
+  streaming no longer paints a partial table over an open timeline; a cross-reference jump into a
+  timeline-view section switches it to the table to highlight the row; timeline columns that are hidden
+  (thus unfetched) show an explicit ⚠ hint instead of silently empty blocks. The row-level named token now
+  binds to the wrapped element, consistent with `${master}` and group-level tokens.
+
+## [0.80.0] - 2026-07-04
+
+### Added
+- **`nested_array` mode — the categorical N-level generalization of `array2d`/`array3d`.** Levels are a
+  list (`levels[]`, outermost first; the last level is the rows), each with `array`/`count`/`access`/
+  `label`/`cast`/`wrap` — and a **`name`**. Naming a level `"core"` gives readable tokens in every
+  field/label expression: **`${core}`** (that level's element) and **`${core_index}`** (its subscript) —
+  e.g. `"${job}.name"`, `"g_stats[${core_index}]"` — no more outer/master jargon (the legacy `${master}`
+  / `${outer}` tokens still work). Level names are validated (unique, identifier-shaped, not reserved).
+  `array2d`/`array3d` configs are unchanged — internally they normalize to the same level list and run
+  through one engine (blob batching, streaming, cancel-on-hide all apply).
+- **⏱ Timeline view — round-robin lanes for any section.** A third view next to Table/Graph: rows become
+  colored **blocks on horizontal lanes**. Configure per section with `"timeline": { "lane", "order",
+  "label", "color", "width" }` — `lane` picks the column that defines the lane (default: the group
+  header), `order` sorts within a lane, `label` is the block text, `color` picks the color-key column
+  (config `badge`/`valueMap` colors win, otherwise a categorical palette), `width` makes block width
+  proportional to a column (e.g. a slice duration). Hover a block for a full-field tooltip. Timeline
+  settings are presentation-only — changing them re-renders without touching GDB. Demo: hidden
+  `coreSched` section (named levels + timeline over per-core job items).
+
+## [0.79.0] - 2026-07-03
+
+### Added
+- **Text templates in `array2d`/`array3d` group labels.** `label` / `innerLabel` containing `${` is now
+  treated as a **literal text template** (no GDB read): `${index}` = the labeled element's own subscript
+  (`label` → outer, `innerLabel` → middle), `${outer_index}` = the outer subscript, `${master_index}` =
+  alias of `${index}` here. An `innerLabel` template defines the **entire** group header (no forced
+  `outerLabel › ` prefix, since the template can embed `${outer_index}` itself) — e.g.
+  `"innerLabel": "core ${outer_index} -> job ${index}"` → `core 0 -> job 0`. Strings without `${` keep
+  the old accessor behavior (evaluated on the element via GDB).
+
+## [0.78.1] - 2026-07-03
+
+### Fixed
+- **`array3d`: `${outer_index}` / `${outer}` cells no longer produce `A syntax error in expression,
+  near '.0'.`** The outer tokens were pre-substituted into the field templates, so a field like
+  `"${outer_index}"` became the token-less literal `"0"`, which the field resolver no longer recognized
+  as standalone and appended to the element (`elem.0`). They are now resolved **at row time** exactly
+  like `${master}`/`${master_index}` (threaded through the collector), so standalone and embedded uses
+  both work — and they also resolve inside `wrap`/`when`/`bar`. Watchpoint targets on multi-level rows
+  were verified against real GDB (address-capture `&(…items)[k].field` + hardware watch both accepted).
+
+## [0.78.0] - 2026-07-03
+
+### Added
+- **New section mode `array3d` — three-level arrays.** The canonical shape:
+  `struct_my* array[core_count]` where each `array[i]` points to an **array of structs** (`array[i][j]`)
+  and each struct carries a second array (`array[i][j].array2[k]`). Each **(outer, middle) pair renders
+  as a group** titled `outerLabel › middleLabel` (`label` on the outer element, `innerLabel` on the
+  middle); rows are the innermost elements. Config: `inner`/`innerCount` = the middle array on the outer
+  element, `inner2`/`inner2Count` = the innermost array on each middle element, `innerAccess` /
+  `inner2Access` for middle/innermost field access. Part expressions accept an accessor, a constant, a
+  `${expr}` template (`${expr}` = the parent element — a bare `"${expr}"` means the parent itself is the
+  array root, exactly the pointer-array case), or the new **`::global`** prefix for a count living in a
+  global (`"::g_jobs_per_core"`; also honored by `array2d`). In fields: `${index}` = innermost subscript,
+  `${master}`/`${master_index}` = the **middle** element/subscript, and the new **`${outer}`** /
+  **`${outer_index}`** = the **outer** element/subscript. A `selectedFrom` detail on an `array3d` master
+  gets `${selected_index}`, `${selected_master_index}` (middle), and the new **`${selected_outer_index}`**
+  (outer) — each with an explicit error when used on a master mode that can't provide it. Demo:
+  `coreJobs` over `g_core_jobs[3]` (per-core job arrays with per-job item arrays) in the test workspace.
+
+## [0.77.0] - 2026-07-03
+
+### Added
+- **New section mode `array2d` — two-level arrays.** For an array whose elements each hold an inner
+  array (`panel_t g_panels[N]` with `widget_t widgets[M]` inside, per-port queues, per-core run lists).
+  No separate master section needed: each **outer element renders as a collapsible group** (titled by
+  `label`, falling back to the outer index) whose rows are its inner elements. Config: `root`/`count` =
+  the outer array, `inner`/`innerCount` = the inner array on each outer element (accessor, constant, or
+  `${expr}` template with `${expr}` = the outer element), `innerAccess` for inner field access;
+  `cast`/`wrap` apply to the outer element. In fields, `${index}` = inner subscript, `${master}` = the
+  outer element, and the new **`${master_index}`** = outer subscript (`${master_index}` also resolves in
+  grouped sections when the `groupBy` target is `array`/`index_list`). A `selectedFrom` detail on an
+  `array2d` master gets both `${selected_index}` (inner) and `${selected_master_index}` (outer). The
+  inner pass reuses the array machinery, so whole-element batching, progressive streaming, and
+  cancel-on-hide all apply. Demo: `panels` section over `g_panels[3]` in the test workspace.
+
+## [0.76.0] - 2026-07-03
+
+### Added
+- **`${selected_master_index}` in on-demand detail sections.** When the `selectedFrom` master section is
+  **grouped** (`groupBy`), this resolves to the index of the **group's master element** the clicked row
+  belongs to — e.g. right-click a thread grouped under processes and the detail can use the *process's*
+  array index (`"expr": "g_procs[${selected_master_index}].name"`). Same strictness as
+  `${selected_index}`: it resolves only when the `groupBy` target section is **`array`/`index_list`**;
+  if the master isn't grouped, or the groupBy target has no real subscript, the detail shows an explicit
+  error instead of a cryptic GDB failure. Demo: hidden `procArr` (array of `g_procs`) + `thrByProc`
+  (threads grouped by it) + right-click → **Show ThreadPos (detail)**.
+
+## [0.75.0] - 2026-07-03
+
+### Added
+- **`${selected_index}` in on-demand detail sections.** Alongside `${selected}` (the selected master row's
+  stable element expression), a `selectedFrom` detail can now use `${selected_index}` — the **index of the
+  master row you right-clicked**. It resolves only when the master section is **`array`** (array subscript)
+  or **`index_list`** (slot subscript); on any other master mode (`linked_list`, `tree`, `walk`) the detail
+  shows an explicit error (*"`${selected_index}` is only valid for an array/index_list master"*) instead of
+  leaking a cryptic GDB error. It's substituted anywhere in the detail's expressions — e.g. to index a
+  parallel array by the selected element's position, or to show the position itself. (`${selected_index}` is
+  distinct from `${index}`, which is the detail's *own* row index.)
+
+## [0.74.0] - 2026-07-03
+
+### Changed
+- **Closing a section while it is loading now cancels its fetch and moves on to the next one.** During a
+  refresh, sections are fetched one at a time (GDB is serial). Previously, hiding a section from the
+  Sections menu mid-load still ran that section's fetch to completion before the next section started —
+  wasting round-trips on data you no longer wanted. Now the refresh loop checks the live hidden state
+  between rows/groups: a section hidden mid-load is aborted at the next row (its partial result is
+  discarded, not sent, and not cached as a master), and the loader immediately proceeds to the next
+  visible section. Logged at `debug`.
+
+## [0.73.3] - 2026-07-03
+
+### Performance
+- **Clicking a `sourceLine` cell now opens the file instantly.** The previous resolver ran several
+  `workspace.findFiles` **index scans in sequence** (one per path suffix), which was slow on large
+  workspaces. It now resolves with **local `fs.existsSync`** — trying each path suffix under each
+  workspace root, no scan — and only falls back to a **single** `findFiles(basename)` (ranked by the
+  longest matching suffix) when the file isn't directly under a root. Resolved paths are **cached**, so
+  repeat clicks are instant. Measured ~0.2 ms (cold) / ~0.06 ms (cached) vs. the multi-scan path.
+
+## [0.73.2] - 2026-07-03
+
+### Fixed
+- **`sourceLine` click now opens the correct file, not just the first same-named one.** GDB reports the
+  source path as recorded in the debug info — often **relative to the compilation directory**, and
+  frequently with an extra leading component that isn't part of the workspace layout (a build dir, the
+  project/obj name, or a `-fdebug-prefix-map` artifact — e.g. `mybuild/obj/src/foo.c`). The cell still
+  displays the short `basename:line`, but the click now navigates using the **full path GDB gave**
+  (carried in a per-cell side channel), resolved robustly: cygwin `/cygdrive/c/…` is mapped to Windows,
+  an absolute path opens directly, otherwise the path is matched by **progressively shorter suffixes**
+  (`**/mybuild/obj/src/foo.c` → `**/obj/src/foo.c` → `**/src/foo.c` → `**/foo.c`). The longest suffix
+  that exists in the workspace wins — so a bogus leading prefix is skipped and two files sharing a
+  basename no longer collide.
+
+## [0.73.0] - 2026-07-03
+
+### Added
+- **Source-location field (`sourceLine`).** Set `"sourceLine": true` on a field whose value is a **code
+  address** and the extension resolves it with GDB `info line *(…)`, showing the **`file:line`** the
+  address maps to — the source-location sibling of `symbol` (which shows `function+offset`). The canonical
+  use is a call-stack PC: put `Func` (`symbol`) and `Source` (`sourceLine`) side by side to see both the
+  function and its exact line. **Clicking the cell opens that file at that line in the editor.** An address
+  with no line information (e.g. code built without `-g`) leaves the cell blank. Read-only, like `symbol`
+  (no `base`/edit/watchpoint); excluded from the whole-element blob batch (it needs its own `info line`).
+
 ## [0.72.3] - 2026-06-21
 
 ### Fixed

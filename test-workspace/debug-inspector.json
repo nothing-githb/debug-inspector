@@ -173,8 +173,8 @@
     ]
   },
 
-  "//callstack": "TALEP-ÜZERİNE DETAY (selectedFrom + ${selected}) + walk modu + cast. SEKME DEĞİL: 'threads' tablosunda/graph'ında bir thread satırını sağ-tıklayıp 'Show Callstack (detail)' seçilince kurulur (tabloda satırın altına açılır; graph'ta detay paneli genişler). Her durakta tazelenir. 'cast':'frame_t *' kürsörü tipler -> ${wrapped_expr} = ((frame_t *)(FP)); böylece ham pointer aritmetiği yerine ${wrapped_expr}->pc / ->prev yazılır (${expr} hâlâ HAM FP değeri, sınır kontrolü/aritmetik için). start=seçilen thread'in FP'si (${selected}->cs_fp); next=önceki FP (${wrapped_expr}->prev); while=FP stack sınırında kaldıkça sür; PC=${wrapped_expr}->pc (x86-64 dönüş adresi). 'Func' kolonu PC'yi 'symbol':true ile çözer (print/a -> hangi fonksiyon). Sentetik veri: tcb_t.cs_fp + g_cs_stack, dönüş adresleri GERÇEK fonksiyon adresleri (her thread'e farklı zincir).",
-  "ss": {
+  "//callstack": "TALEP-ÜZERİNE DETAY (selectedFrom + ${selected}) + walk modu + cast. SEKME DEĞİL: 'threads' tablosunda/graph'ında bir thread satırını sağ-tıklayıp 'Show Callstack (detail)' seçilince kurulur (tabloda satırın altına açılır; graph'ta detay paneli genişler). Her durakta tazelenir. 'cast':'frame_t *' kürsörü tipler -> ${wrapped_expr} = ((frame_t *)(FP)); böylece ham pointer aritmetiği yerine ${wrapped_expr}->pc / ->prev yazılır (${expr} hâlâ HAM FP değeri, sınır kontrolü/aritmetik için). start=seçilen thread'in FP'si (${selected}->cs_fp); next=önceki FP (${wrapped_expr}->prev); while=FP stack sınırında kaldıkça sür; PC=${wrapped_expr}->pc (x86-64 dönüş adresi). 'Func' kolonu PC'yi 'symbol':true ile çözer (print/a -> hangi fonksiyon). 'Source' kolonu PC'yi 'sourceLine':true ile çözer (info line -> hangi dosya:satır; hücreye tıklayınca kaynak editörde o satırda açılır). Sentetik veri: tcb_t.cs_fp + g_cs_stack, dönüş adresleri GERÇEK fonksiyon adresleri (her thread'e farklı zincir).",
+  "callstack": {
     "mode": "walk",
     "selectedFrom": "threads",
     "cast": "frame_t *",
@@ -183,9 +183,161 @@
     "while": "(${expr}) >= g_cs_thread.stack_base && (${expr}) < g_cs_thread.stack_top",
     "max": 64,
     "fields": [
-      { "label": "PC",   "expr": "${wrapped_expr}->pc", "base": "hex" },
-      { "label": "Func", "expr": "${wrapped_expr}->pc", "symbol": true },
-      { "label": "FP",   "expr": "${expr}", "base": "hex" }
+      { "label": "PC",     "expr": "${wrapped_expr}->pc", "base": "hex" },
+      { "label": "Func",   "expr": "${wrapped_expr}->pc", "symbol": true },
+      { "label": "Source", "expr": "${wrapped_expr}->pc", "sourceLine": true },
+      { "label": "FP",     "expr": "${expr}", "base": "hex" }
+    ]
+  },
+
+  "//mutexAt": "TALEP-ÜZERİNE DETAY, master='mutexes' (ARRAY). ${selected_index} örneği: 'mutexes' tablosunda bir satırı sağ-tıklayıp 'Show MutexAt (detail)' seçince kurulur. 'selIdx' = seçilen satırın DİZİ index'i (${selected_index}); 'detIdx' = detayın KENDİ satır index'i (${index}, burada 0) -> ikisinin farkı görülür. 'byIdx' seçilen index ile diziye erişir. 'Owner' = ÇAPRAZ-REFERANS LİNK ÖRNEĞİ: detay alanı da 'link' alabilir (selectedFrom bölümlerinde de çalışır) -> owner değeri 'threads' bölümündeki ID ile eşleşirse hücre tıklanabilir, tıklayınca o thread'e gider. NOT: master 'array'/'index_list' olmadığı için ${selected_index} 'threads'/callstack gibi linked/walk master'da AÇIK hata verir.",
+  "mutexAt": {
+    "mode": "array",
+    "selectedFrom": "mutexes",
+    "root": "g_mutexes",
+    "count": "1",
+    "access": ".",
+    "fields": [
+      { "label": "selIdx", "expr": "${selected_index}" },
+      { "label": "detIdx", "expr": "${index}" },
+      { "label": "byIdx",  "expr": "g_mutexes[${selected_index}].name" },
+      { "label": "Owner",  "expr": "g_mutexes[${selected_index}].owner", "link": { "section": "threads", "match": "ID" } }
+    ]
+  },
+
+  "//panels": "İKİ SEVİYELİ DİZİ (nested_array, 2 level): dış dizi g_panels[g_panel_count], her elemanın İÇ dizisi widgets[used]. Ayrı master bölüm GEREKMEZ — her dış eleman bir GRUP olur (başlık: label='name'), satırlar iç elemanlar. ${index}=İÇ subscript, ${master}=DIŞ eleman, ${master_index}=DIŞ subscript. inner/innerCount dış eleman üzerinde accessor (ya da ${expr} şablonu; ${expr}=dış eleman). Bu bölümden selectedFrom detayı açılırsa ${selected_index}=iç, ${selected_master_index}=dış subscript olur.",
+  "panels": {
+    "mode": "nested_array",
+    "levels": [
+      { "array": "g_panels", "count": "g_panel_count", "access": ".", "label": "name" },
+      { "array": "widgets", "count": "used", "access": "." }
+    ],
+    "fields": [
+      { "label": "P",     "expr": "${master_index}" },
+      { "label": "W",     "expr": "${index}" },
+      { "label": "X",     "expr": "x" },
+      { "label": "Y",     "expr": "y" },
+      { "label": "Label", "expr": "label" },
+      { "label": "Owner", "expr": "${master}.name" }
+    ]
+  },
+
+  "//coreJobs": "ÜÇ SEVİYELİ DİZİ (nested_array, 3 level — isimsiz seviyeler + legacy ${outer_index}/${master_index}/${index} token'ları) — tipik yapı: struct_my* array[core_count]; array[i] bir struct DİZİSİNE işaret eder (array[i][j]); her struct'ın içinde ikinci bir dizi pointer'ı vardır (array[i][j].array2[k]). Burada: g_core_jobs[c][j].items[k]. 'inner':'${expr}' = dış elemanın KENDİSİ orta dizinin kökü (pointer dizi gibi kullanılır); 'innerCount' GLOBAL olduğundan '::' önekiyle ('::g_jobs_per_core' — dış elemana bağlanmaz). Grup başlığı: innerLabel ŞABLON ('${' içeriyor) -> GDB'siz metin, TÜM başlığı tanımlar: 'core ${outer_index} -> job ${index}' -> 'core 0 -> job 0'. Accessor yazılsaydı ('name') başlık 'dışLabel › jobName' olurdu. ${index}=item, ${master}=JOB (orta), ${master_index}=job idx, ${outer}=dış eleman, ${outer_index}=core idx.",
+  "//schedules": "COKLU TIMELINE (chart ile grafik bolme): FARKLI UZUNLUKTA timeline'lar. 3 seviye tl->core->win. timeline.chart='TL' -> her timeline AYRI grafik+eksen; total='Total' KOLON (her grafigin uzunlugu satirlarindan, hesaplanmaz; her core'da ayni cunku total_ms timeline seviyesinde); scale='proportional' -> cruise(250) grafigi boot(100)'un ~2.5 kati genislikte cizilir. Bosluklar konumlu yerlesimden dogal olusur. ⏱ ile ac.",
+  "schedules": {
+    "mode": "nested_array",
+    "timeline": { "chart": "TL", "lane": "Core", "start": "Start", "width": "Dur", "total": "Total", "scale": "proportional", "unit": "ms", "label": "Part", "color": "Part" },
+    "levels": [
+      { "name": "tl",   "array": "g_timelines", "count": "g_timeline_count", "access": "." },
+      { "name": "cpu",  "array": "cores", "count": "ncores", "access": "." },
+      { "name": "win",  "array": "wins", "count": "nwins", "access": "." }
+    ],
+    "fields": [
+      { "label": "TL",    "expr": "${tl}.name" },
+      { "label": "Core",  "expr": "${cpu}.core" },
+      { "label": "Part",  "expr": "part" },
+      { "label": "Start", "expr": "start" },
+      { "label": "Dur",   "expr": "dur" },
+      { "label": "Total", "expr": "${tl}.total_ms" }
+    ]
+  },
+
+  "//sched": "GERCEK KONUMLU TIMELINE ORNEGI (ARINC-653 benzeri zamanlama tablosu). 3 seviyeli nested_array: core -> major frame -> partition PENCERESI (satirlar). timeline KONUMLU modda: start='Start' (pencere baslangici, ms), width='Dur' (pencere suresi), total=100 (major frame TOPLAM suresi — config'ten verilir, hesaplanmaz). Pencereler arasi IDLE araliklar timeline'da BOSLUK olarak gorunur. Lane = grup basligi (frame label sablonu tum basligi tanimlar: 'cpu0 frame0' ...). timeline.set = DIZI (birden cok kume): [dev, sig] -> her pencere hem device (devs/ndev, title='dev') hem signal (sigs/nsig, title='sig') kumesini AYRI chip satirlarinda gosterir (>=2 kume oldugu icin title'lar caption olur; her kume kendi label/dashWhen'ine sahip). Cok fazla device blok'a sigmazsa otomatik gizlenir + '+N' rozeti (tam liste tooltip'te). dashWhen='${expr}.off != 0' -> IFADE olarak ${expr}=cihaz elemani; 'off' (cevrimdisi) cihazlarin chip KENARI KESIKLI cizilir (adc1/imu/can0). (Duz accessor 'off' de calisir; ${expr} ile karsilastirma/bilesik ifade yazilabilir.) totalLabel='major frame' -> eksende 'major frame: 200 ms' (isim VARSAYILMAZ, verince yazilir). Bloga TIKLA -> timeline altinda detay karti (blogun tum alanlari + device kumesi). Legend basligi renklerin hangi field'i (color=Part) kodladigini soyler. ⏱ butonuyla ac.",
+  "sched": {
+    "mode": "nested_array",
+    "timeline": { "start": "Start", "width": "Dur", "total": 200, "totalLabel": "major frame", "unit": "ms", "label": "Part", "color": "Part", "set": [ { "array": "devs", "count": "ndev", "access": ".", "label": "name", "title": "dev", "dashWhen": "${expr}.off != 0" }, { "array": "sigs", "count": "nsig", "access": ".", "label": "name", "title": "sig", "dashWhen": "off" } ] },
+    "levels": [
+      { "name": "core",  "array": "g_sched", "count": "g_sched_cores", "access": ".", "label": "name" },
+      { "name": "frame", "array": "frames", "count": "nframes", "access": ".", "label": "cpu${core_index} frame${frame_index}" },
+      { "name": "win",   "array": "wins", "count": "nwins", "access": "." }
+    ],
+    "fields": [
+      { "label": "Part",  "expr": "part" },
+      { "label": "Start", "expr": "start_ms" },
+      { "label": "Dur",   "expr": "dur_ms" },
+      { "label": "End",   "expr": "${expr}.start_ms + ${expr}.dur_ms" },
+      { "label": "Core",  "expr": "${core}.name" },
+      { "label": "Frame", "expr": "${frame}.frame_no" }
+    ]
+  },
+
+  "//coreSched": "nested_array İSİMLİ SEVİYELERLE (kategorik biçim) + İSİMLİ SEVİYELER + TIMELINE görünümü. levels[0]=en dış ... son seviye=SATIRLAR. 'name' verilen seviye için ifadelerde ${<ad>} = eleman, ${<ad>_index} = subscript (örn ${core_index}, ${job}.name, ${item_index}) — outer/master ezberine gerek yok. label ŞABLONU isimli indexleri kullanabilir. 'timeline' ayarı ⏱ görünümünü tanımlar: lane=şerit kolonu, order=sıralama, label=blok metni, color=renk anahtarı, width=orantılı genişlik. hidden:true (Sections menüsünden aç).",
+  "coreSched": {
+    "mode": "nested_array",
+    "hidden": true,
+    "timeline": { "lane": "Core", "start": "Start", "width": "Dur", "label": "Job", "color": "Job", "total": 160 },
+    "levels": [
+      { "name": "core", "array": "g_core_jobs", "count": "g_core_count" },
+      { "name": "job",  "array": "${expr}", "count": "::g_jobs_per_core", "access": ".", "label": "core ${core_index} / job ${job_index}" },
+      { "name": "item", "array": "items", "count": "nitems", "access": "." }
+    ],
+    "fields": [
+      { "label": "Core", "expr": "${core_index}" },
+      { "label": "Slot", "expr": "${item_index}" },
+      { "label": "Job",  "expr": "${job}.name" },
+      { "label": "Id",   "expr": "id" },
+      { "label": "Val",  "expr": "val" },
+      { "label": "Start", "expr": "start" },
+      { "label": "Dur",   "expr": "dur" }
+    ]
+  },
+
+  "coreJobs": {
+    "mode": "nested_array",
+    "timeline": { "lane": "Core", "order": "K", "label": "Id", "color": "JobName" },
+    "levels": [
+      { "array": "g_core_jobs", "count": "g_core_count" },
+      { "array": "${expr}", "count": "::g_jobs_per_core", "access": ".", "label": "core ${outer_index} -> job ${index}" },
+      { "array": "items", "count": "nitems", "access": "." }
+    ],
+    "fields": [
+      { "label": "Core", "expr": "${outer_index}" },
+      { "label": "Job",  "expr": "${master_index}" },
+      { "label": "K",    "expr": "${index}" },
+      { "label": "Id",   "expr": "id" },
+      { "label": "Val",  "expr": "val" },
+      { "label": "JobName", "expr": "${master}.name" }
+    ]
+  },
+
+  "//procArr": "ARRAY master (g_procs[g_proc_count]) — ${selected_master_index} demosu için. 'thrByProc' buna groupBy ile bağlanır. hidden:true (Sections menüsünden aç).",
+  "procArr": {
+    "mode": "array",
+    "root": "g_procs",
+    "count": "g_proc_count",
+    "access": ".",
+    "label": "name",
+    "hidden": true,
+    "fields": [
+      { "label": "PID",  "expr": "pid" },
+      { "label": "Name", "expr": "name" }
+    ]
+  },
+
+  "//thrByProc": "procArr'a (ARRAY master) gruplu thread listesi. Bir thread satırına sağ-tık -> 'Show ThreadPos (detail)': ${selected_master_index} = o thread'in PROCESS'inin DİZİ index'i (procArr subscript). hidden:true.",
+  "thrByProc": {
+    "groupBy": "procArr",
+    "mode": "linked_list",
+    "root": "${master}.thread_list",
+    "next": "next",
+    "hidden": true,
+    "fields": [
+      { "label": "ID",   "expr": "id" },
+      { "label": "Name", "expr": "name" }
+    ]
+  },
+
+  "//threadPos": "TALEP-ÜZERİNE DETAY, master='thrByProc' (gruplu, groupBy hedefi ARRAY). 'procIdx' = ${selected_master_index} (seçilen thread'in process'inin g_procs index'i); 'procName' o index ile diziye erişir; 'thrName' = ${selected} (seçilen thread). NOT: thrByProc'un kendisi linked_list -> ${selected_index} burada kullanılamaz (kullanılırsa AÇIK hata), ama ${selected_master_index} groupBy hedefi array olduğu için çalışır.",
+  "threadPos": {
+    "mode": "array",
+    "selectedFrom": "thrByProc",
+    "root": "g_procs",
+    "count": "1",
+    "access": ".",
+    "fields": [
+      { "label": "procIdx",  "expr": "${selected_master_index}" },
+      { "label": "procName", "expr": "g_procs[${selected_master_index}].name" },
+      { "label": "thrName",  "expr": "(${selected})->name" }
     ]
   }
 }

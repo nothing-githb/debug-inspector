@@ -16,10 +16,26 @@ interface FieldCfg {
   valueMap?: Record<string, string | { text?: string; color?: string }>;  // değer -> görüntü. Düz string verilirse görüntülenecek METİN; {text,color} ile metin ve/veya renk. color: renk adı veya #rrggbb. badge'den farkı: badge yalnız renklendirir, valueMap METNİ de değiştirir (örn 2 -> "XXX" + #ff0000). Tablo hücresinde ve graph kartında uygulanır.
   flags?: Record<string, string | { text?: string; color?: string }>;  // BAYRAK alanı: anahtar = bit MASKESİ (hex 0x04 veya dec 4); integer değerin set olan bitleri çözülüp isimleri gösterilir ((val & mask) == mask). Düz string = isim; {text,color} ile renk. Eşlenmeyen kalan bitler sonda +0x.. olarak gösterilir.
   symbol?: boolean;  // SEMBOL alanı: değeri bir KOD ADRESİ kabul et; GDB 'print/a' ile çöz ve 'func+off' sembolünü göster (çözülemezse adres). Örn callstack PC -> hangi fonksiyon. Salt-okunur gösterim (base/edit/watch uygulanmaz).
+  sourceLine?: boolean;  // KAYNAK KONUM alanı: değeri bir KOD ADRESİ kabul et; GDB 'info line *(...)' ile çöz ve "dosya:satır" göster (satır bilgisi yoksa boş). Örn callstack PC -> hangi kaynak satırı. symbol gibi salt-okunur; tıklanınca o dosya/satır editörde açılır.
 }
+// nested_array SEVİYESİ: çok boyutlu dizinin bir boyutu. levels[0] = EN DIŞ, son seviye = SATIRLAR.
+// 'name' verilirse ifadelerde ${<name>} = o seviyenin elemanı, ${<name>_index} = subscript'i (örn ${core}, ${core_index}).
+interface LevelCfg {
+  name?: string;    // seviyenin adı -> isimli token'lar (${core}/${core_index}); benzersiz + rezerve olmamalı
+  array?: string;   // bu seviyenin dizisi: levels[0]'da tam ifade; sonrakilerde PARENT elemana göre parça (accessor | sabit | "::global" | ${expr} şablonu; "${expr}" tek başına = parent'ın kendisi)
+  count?: string;   // eleman sayısı: levels[0]'da tam ifade; sonrakilerde parça sözdizimi
+  access?: string;  // BU seviyenin elemanına alan erişimi "." (default) | "->" (çocuk dizi/label/alanlar bunu kullanır)
+  label?: string;   // grup başlığı parçası: accessor (GDB ile okunur) ya da '${' içeren METİN şablonu
+  cast?: string;    // bu seviyenin dizisini cast'le: ((cast)(dizi))[i]
+  wrap?: string;    // bu seviyenin elemanını sarmala; ${expr} = eleman
+}
+// ⏱ timeline.set: bir BLOK elemanının alt dizisi (device/id kümesi). Tek nesne VEYA dizi (birden çok küme) verilebilir.
+interface TlSetDef { array: string; count: string | number; access?: string; label?: string; title?: string; dashWhen?: string | number | boolean; max?: number }
 interface SectionCfg {
-  mode: 'linked_list' | 'array' | 'index_list' | 'tree' | 'walk';
-  root: string;
+  mode: 'linked_list' | 'array' | 'index_list' | 'tree' | 'walk' | 'nested_array';
+  root: string;   // nested_array: levels[0].array verilmemişse DIŞ dizi buradan alınır
+  levels?: LevelCfg[];  // nested_array: seviye listesi (>=2; son seviye SATIRLAR). Parça sözdizimi (array/count): accessor ("items") | sabit ("4") | "::global" | ${expr} şablonu (${expr} = PARENT eleman; "${expr}" tek başına = parent'ın kendisi dizi kökü, örn struct_my* array[N] -> array[i][j])
+  timeline?: { lane?: string; order?: string; label?: string; color?: string; width?: string; start?: string; total?: string | number; totalLabel?: string; unit?: string; chart?: string; scale?: 'proportional' | 'fit'; set?: TlSetDef | TlSetDef[] };  // ⏱ timeline: lane=şerit kolonu (yoksa grup başlığı), start=blokların EKSEN KONUMU kolonu (verilirse konumlu mod: aralar boş kalabilir; order yok sayılır), width=süre/genişlik kolonu, total=eksen sonu, konumlu modda ZORUNLU — SAYI (tüm grafiklerde sabit) YA DA KOLON adı (her grafiğin total'ı kendi satırlarından; hesaplama yok); totalLabel=total için eksende gösterilecek ETİKET metni (verilmezse VARSAYILMAZ, sadece sayı+birim yazılır; örn "major frame" -> "major frame: 200 ms"); chart=grafik bölme kolonu (her farklı değer AYRI grafik+eksen); scale='proportional'(varsayılan, uzun timeline fiziksel uzun) | 'fit'(hepsi tam genişlik); unit=eksen birimi (örn "ms"), order=ardışık modda sıralama, label=blok metni, color=renk anahtarı. set=TEK küme nesnesi YA DA DİZİ ([{...},{...}] birden çok küme; her biri kendi chip satırı; title VERİLMİŞSE chip'lerin soluna caption yazılır — tek set'te de). Her küme={array,count,access?,label?,title?,dashWhen?,max?}=bir BLOK elemanının ALT dizisi (örn part'ın device id kümesi) -> blok içinde chip olarak gösterilir; array/count parça sözdizimi (accessor | sabit | "::global" | "${expr}" şablonu; PARENT = blok elemanı), label = her alt elemanda okunacak alan (yoksa elemanın kendisi), access = alt eleman erişimi "." | "->", title = tooltip'teki küme BAŞLIĞI (verilmezse isim yazılmaz, sadece "(N): ...") — varsayılmaz, sen verirsin, dashWhen = kesikli-kenar KOŞULU (doğruysa chip kenarı KESİKLİ; field 'when' ile aynı boş/0/false/NULL=false kuralı): true/false = SABİT (GDB'siz, hepsi/hiçbiri) | "1"/"0" gibi eleman-bağımsız ifade = BİR KEZ | accessor "off" / "${expr}" şablonu (${expr}=cihaz elemanı) = HER eleman için, max = alt eleman tavanı (varsayılan 64). Bloğa sığmayan chip'ler otomatik gizlenir + sona "+N" rozeti (tam liste tooltip'te; zoom'da genişleyince daha fazlası görünür)
   children?: string[];   // tree: çocuk pointer alan adları (örn ["left","right"]); varsayılan ["left","right"]
   next?: string;      // linked_list: sonraki node pointer alanı | index_list: sonraki index alanı | walk: ${expr} (kürsör) -> sonraki kürsör (örn "*(unsigned long*)(${expr})")
   start?: string;     // walk: başlangıç kürsörü (adres/değer ifadesi; root yoksa bunu kullanır)
@@ -32,7 +48,7 @@ interface SectionCfg {
   wrap?: string;      // elemanı field'a erişmeden ÖNCE sarmala; ${expr}=eleman. Örn "((T*)${expr})" -> ((T*)(elem))->field
   label?: string;     // (master) ağaç düğüm başlığı için ifade; groupBy hedefi bunu kullanır
   groupBy?: string;   // bu bölümü adı verilen master bölüme göre ağaç olarak grupla; root'ta ${master}
-  selectedFrom?: string;   // TALEP-ÜZERİNE DETAY bölümü: adı verilen master bölümün BİR satırı sağ-tıklanıp "Show detailed info" seçilince kurulur. Sekme olarak GÖRÜNMEZ. Bu bölümün ifadelerinde ${selected} = seçilen master satırın kararlı eleman ifadesi (örn callstack: start "${selected}->fp").
+  selectedFrom?: string;   // TALEP-ÜZERİNE DETAY bölümü: adı verilen master bölümün BİR satırı sağ-tıklanıp "Show detailed info" seçilince kurulur. Sekme olarak GÖRÜNMEZ. Bu bölümün ifadelerinde ${selected} = seçilen master satırın kararlı eleman ifadesi (örn callstack: start "${selected}->fp"); ${selected_index} = seçilen satırın index'i (yalnız master 'array'/'index_list' ise); ${selected_master_index} = seçilen satırın ait olduğu GRUBUN master index'i (yalnız master gruplu + groupBy hedefi 'array'/'index_list' ise). Koşullar sağlanmazsa detay AÇIK hata gösterir.
   hidden?: boolean;   // bölüm (sekme) başlangıçta gizli (kullanıcı Sections menüsünde seçim yapana kadar)
   max?: number;
   fields: FieldCfg[];
@@ -50,9 +66,11 @@ interface Section {
   valueMap?: Record<string, Record<string, { text?: string; color?: string }>>;   // kolon -> değer -> {metin, renk} görüntü eşlemesi (badge'in metin değiştiren üst kümesi)
   flags?: Record<string, Record<string, { text?: string; color?: string }>>;   // kolon -> bit MASKESİ (string) -> {metin, renk}; integer'ın set bitleri çözülür
   needsSelection?: boolean;   // gruplu bölüm: master bölüm boş/bulunamadı
+  error?: string;             // detay bölümü: çözülemeyen durum (örn ${selected_index}, array/index_list olmayan master'da) -> panelde uyarı göster
   grouped?: boolean;          // groupBy ile ağaç olarak gruplanmış
   groups?: Group[];           // her master elemanı için bir grup
   kind?: 'linked' | 'array' | 'index' | 'tree';   // graph view: zincir (next) / ızgara (array) / hiyerarşi (tree) yerleşimi
+  timeline?: { lane?: string; order?: string; label?: string; color?: string; width?: string; start?: string; total?: string | number; totalLabel?: string; unit?: string; chart?: string; scale?: 'proportional' | 'fit'; set?: TlSetDef | TlSetDef[] };   // ⏱ timeline görünümü ayarları (sunum meta'sı; cfg.timeline'dan)
 }
 interface ColPref { order: string[]; hidden: string[]; }
 
@@ -63,7 +81,7 @@ let panel: vscode.WebviewPanel | undefined;
 let lastStopped: { session: vscode.DebugSession; threadId: number; frameId?: number } | undefined;
 // Talep-üzerine açık detaylar (selectedFrom + ${selected}). master satırı sağ-tıklanıp açılınca eklenir;
 // her durakta yeniden çekilir; kapatılınca/panel taşınınca temizlenir. sel = seçilen satırın kararlı eleman ifadesi.
-let openDetails: Array<{ master: string; sel: string; section: string }> = [];
+let openDetails: Array<{ master: string; sel: string; section: string; selIndex?: string; selMasterIndex?: string; selOuterIndex?: string }> = [];
 let printSetupFor: vscode.DebugSession | undefined;   // #3: kompakt print ayarları bu oturumda yapıldı mı
 // Output: config-driven seviyeli logger (debugInspector.logLevel)
 // Seçilebilir seviyeler: off / info / debug. trace -> debug tier, warn/error -> info tier.
@@ -118,7 +136,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('debugInspector.open', () => {
       log.debug('command: open panel');
       openPanel(context);
-      if (lastStopped) refresh(lastStopped.session, lastStopped.threadId);
+      // doRefresh() KULLAN — doğrudan refresh() DEĞİL: doğrudan çağrı debounce/gen-guard/gdbAcquire mutex'ini
+      // atlar ve webview'in yüklenince gönderdiği 'ready' tetiklediği refresh ile YARIŞIR (çift fetch + paylaşılan
+      // $ri_* cursor çakışması). doRefresh ikisini tek koşuya indirger. (Yeni panelde 'ready' zaten tetikler;
+      // bu satır mevcut panel REVEAL edilince —webview yeniden yüklenmez, 'ready' gelmez— gereklidir.)
+      if (lastStopped) doRefresh();
     }),
     vscode.commands.registerCommand('debugInspector.showLog', () => log.show()),
     vscode.commands.registerCommand('debugInspector.openConfig', async () => {
@@ -233,7 +255,7 @@ function onConfigChange() {
     panel.webview.postMessage({
       type: 'presentationUpdate', section: name,
       bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields),
-      links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields), flags: fieldFlags(scfg.fields)
+      links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields), flags: fieldFlags(scfg.fields), srcCols: fieldSrcCols(scfg.fields), timeline: scfg.timeline
     });
   }
 }
@@ -285,6 +307,10 @@ function doRefresh() {
 }
 function cancelRefresh() {          // program devam edince: planlanan refresh'i iptal et + çalışanı geçersiz kıl
   refreshGen++;
+  // KUYRUĞA ALINMIŞ re-run'ı da düşür: çalışan bir refresh sırasında ikinci bir tetik pendingRefresh=true
+  // yapmış olabilir; bunu temizlemezsek runRefresh'in do/while'ı (lastStopped hâlâ dolu) 'continued'den SONRA
+  // bir tam refresh daha koşar (gen yeni bump'landığı için stale de değil) -> koşan program üstünde stale çekim/⚠.
+  pendingRefresh = false;
   if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = undefined; }
 }
 async function runRefresh() {
@@ -335,7 +361,10 @@ async function refreshTarget(section: string, label?: string) {
     if (!oneField) return;
     const subCfg: SectionCfg = { ...scfg, fields: [oneField] };
     let rows: Row[];
-    if (isGrouped(scfg)) {
+    if (isMultiArray(scfg)) {
+      const g = await buildArrayNd(session, frameId, section, subCfg);
+      rows = (g.groups || []).reduce<Row[]>((a, gr) => a.concat(gr.rows), []);
+    } else if (isGrouped(scfg)) {
       const g = await buildGrouped(session, frameId, idx, section, subCfg, masters);
       rows = (g.groups || []).reduce<Row[]>((a, gr) => a.concat(gr.rows), []);
     } else {
@@ -345,9 +374,15 @@ async function refreshTarget(section: string, label?: string) {
     panel.webview.postMessage({ type: 'patchColumn', section, label, rows, ts });
   } else {
     // TEK BÖLÜM: tüm aktif kolonlarıyla yeniden kur
-    const sec = isGrouped(scfg)
-      ? await buildGrouped(session, frameId, idx, section, scfg, masters)
-      : await buildSection(session, scfg, frameId, '$ri_' + idx, section);
+    const sec = isMultiArray(scfg)
+      ? await buildArrayNd(session, frameId, section, scfg)
+      : isGrouped(scfg)
+        ? await buildGrouped(session, frameId, idx, section, scfg, masters)
+        : await buildSection(session, scfg, frameId, '$ri_' + idx, section);
+    // kolon tercihleri KURULUM sırasında değişmiş olabilir (örn kullanıcı yeniden-kurulum sürerken Hide all yaptı):
+    // build başındaki snapshot'ı gönderirsek webview'in taze gizleme durumu ESKİYE döner. Post ANINDA etkin tercihleri uygula.
+    const effNow = effectiveColumns(section, scfg.fields);
+    sec.columnsAll = effNow.order; sec.hidden = effNow.hidden;
     log?.debug(`refreshTarget: section "${section}" rebuilt`);
     panel.webview.postMessage({ type: 'patchSection', section, sec, ts });
   }
@@ -356,20 +391,71 @@ async function refreshTarget(section: string, label?: string) {
 
 // Talep-üzerine DETAY (selectedFrom): seçilen master satırı (sel = kararlı eleman ifadesi) için detay bölümünü kur ve gönder.
 // ${selected} -> (sel) tüm ifadelerde. Sekme akışından bağımsız; kendi GDB kilidini alır (cursor çakışması olmasın).
-async function refreshDetail(d: { master: string; sel: string; section: string }): Promise<void> {
+async function refreshDetail(d: { master: string; sel: string; section: string; selIndex?: string; selMasterIndex?: string; selOuterIndex?: string }): Promise<void> {
   if (!panel || !lastStopped) return;
   const cfg = loadConfig(); if (!cfg) return;
   const secs = extractSections(cfg);
   const dNode = secs.find(s => s.name === d.section);
   if (!dNode || !isDetail(dNode.cfg)) return;
+  const ts = new Date().toLocaleTimeString();
+  const failDetail = (emsg: string) => {   // detay panelinde AÇIK uyarı göster (GDB'ye kriptik hata sarkıtma)
+    log?.warn(`refreshDetail "${d.section}": ${emsg}`);
+    panel!.webview.postMessage({ type: 'patchDetail', master: d.master, sel: d.sel, section: d.section, sec: { name: d.section, columnsAll: [], hidden: [], rows: [], summary: '', error: emsg }, ts });
+  };
+  // ${selected_index}: yalnız master 'array' / 'index_list' / 'nested_array' ise anlamlı (gerçek subscript;
+  // nested_array'de SATIR/en iç subscript). Değilse veya index yoksa AÇIK hata.
+  if (usesSelectedIndex(dNode.cfg)) {
+    const mMode = secs.find(s => s.name === (dNode.cfg.selectedFrom as string))?.cfg.mode;
+    if (mMode !== 'array' && mMode !== 'index_list' && mMode !== 'nested_array') {
+      failDetail(`\${selected_index} yalnız 'array', 'index_list' veya 'nested_array' master bölümde kullanılabilir; "${dNode.cfg.selectedFrom}" modu: ${mMode ?? 'bilinmiyor'}.`); return;
+    }
+    if (d.selIndex == null || d.selIndex === '') {
+      failDetail(`\${selected_index} çözülemedi: seçilen satırın index'i yok (master "${dNode.cfg.selectedFrom}").`); return;
+    }
+  }
+  // ${selected_master_index}: seçilen satırın PARENT'ının index'i. Anlamlı olduğu durumlar:
+  // (a) master bölüm 'nested_array' (satırın PARENT seviyesinin subscript'i), ya da (b) master gruplu (groupBy)
+  // VE groupBy hedefi 'array'/'index_list'. Değilse AÇIK hata.
+  if (usesSelectedMasterIndex(dNode.cfg)) {
+    const mCfg = secs.find(s => s.name === (dNode.cfg.selectedFrom as string))?.cfg;
+    if (mCfg?.mode !== 'nested_array') {
+      const gName = mCfg?.groupBy as string | undefined;
+      if (!gName) {
+        failDetail(`\${selected_master_index} için master bölüm ("${dNode.cfg.selectedFrom}") gruplu (groupBy) ya da 'nested_array' olmalı.`); return;
+      }
+      const gMode = secs.find(s => s.name === gName)?.cfg.mode;
+      if (gMode !== 'array' && gMode !== 'index_list') {
+        failDetail(`\${selected_master_index} yalnız groupBy hedefi 'array' veya 'index_list' ise kullanılabilir; "${gName}" modu: ${gMode ?? 'bilinmiyor'}.`); return;
+      }
+    }
+    if (d.selMasterIndex == null || d.selMasterIndex === '') {
+      failDetail(`\${selected_master_index} çözülemedi: seçilen satırın master index'i yok.`); return;
+    }
+  }
+  // ${selected_outer_index}: seçilen satırın DIŞ (1. seviye) index'i — yalnız 'nested_array' (>=3 seviye) master.
+  if (usesSelectedOuterIndex(dNode.cfg)) {
+    const mMode = secs.find(s => s.name === (dNode.cfg.selectedFrom as string))?.cfg.mode;
+    if (mMode !== 'nested_array') {
+      failDetail(`\${selected_outer_index} yalnız 'nested_array' (>=3 seviye) master bölümde kullanılabilir; "${dNode.cfg.selectedFrom}" modu: ${mMode ?? 'bilinmiyor'}.`); return;
+    }
+    if (d.selOuterIndex == null || d.selOuterIndex === '') {
+      failDetail(`\${selected_outer_index} çözülemedi: seçilen satırın dış index'i yok.`); return;
+    }
+  }
   const session = lastStopped.session;
   const frameId = lastStopped.frameId;
-  const subCfg = substituteSelected(dNode.cfg, d.sel);
+  const subCfg = substituteSelected(dNode.cfg, d.sel, d.selIndex, d.selMasterIndex, d.selOuterIndex);
+  // ALAN ifadelerindeki ${selected*} token'ları satır anında çözülür (ön-yerleştirme değil — bkz substituteSelected)
+  const selVars: Record<string, string> = { selected: '(' + d.sel + ')' };
+  if (d.selIndex != null) selVars['selected_index'] = d.selIndex;
+  if (d.selMasterIndex != null) selVars['selected_master_index'] = d.selMasterIndex;
+  if (d.selOuterIndex != null) selVars['selected_outer_index'] = d.selOuterIndex;
   const rel = await gdbAcquire();
   try {
-    const sec = await buildSection(session, subCfg, frameId, '$rd_' + d.section, d.section);
-    const ts = new Date().toLocaleTimeString();
-    log?.debug(`refreshDetail: "${d.section}" of [${d.sel}] -> ${sec.rows.length} row(s)`);
+    const sec = isMultiArray(subCfg)
+      ? await buildArrayNd(session, frameId, d.section, subCfg, undefined, undefined, selVars)   // çok seviyeli detay da desteklenir
+      : await buildSection(session, subCfg, frameId, '$rd_' + d.section, d.section, undefined, undefined, selVars);
+    log?.debug(`refreshDetail: "${d.section}" of [${d.sel}] (idx=${d.selIndex ?? '-'}) -> ${sec.rows.length} row(s)`);
     panel.webview.postMessage({ type: 'patchDetail', master: d.master, sel: d.sel, section: d.section, sec, ts });
   } finally { rel(); }
 }
@@ -391,7 +477,7 @@ async function refreshRow(section: string, rowIndex: number | null) {
   const node = extractSections(cfg).find(s => s.name === section);
   if (!node) return;
   const scfg = node.cfg;
-  if (rowIndex == null || rowIndex < 0 || isGrouped(scfg) || scfg.mode === 'index_list' || scfg.mode === 'tree' || scfg.mode === 'walk') { refreshTarget(section); return; }
+  if (rowIndex == null || rowIndex < 0 || isGrouped(scfg) || isMultiArray(scfg) || scfg.mode === 'index_list' || scfg.mode === 'tree' || scfg.mode === 'walk') { refreshTarget(section); return; }
   const rel = await gdbAcquire();   // tekil satır fetch'i de refresh / diğer işlemlerle iç içe geçmesin
   try {
   const session = lastStopped.session;
@@ -478,6 +564,60 @@ function isNull(v: string): boolean {
 function symbolizeAddr(v: string): string {
   const m = (v ?? '').match(/<([^>]+)>/);
   return m ? m[1] : (v ?? '').trim();
+}
+
+// 'info line *(...)' çıktısından "dosya:satır" çıkar (symbolizeAddr'ın kardeşi; adres -> kaynak konumu).
+// GDB çıktısı: 'Line 156 of "threads_demo.c" starts at address 0x.. <mk_thread> and ends at 0x.. <mk_thread+23>.'
+// Satır bilgisi yoksa: 'No line number information available for address 0x..' -> boş döndür (hücre boş kalır).
+// Dönen değer HAM gdbExec çıktısıdır (cleanValue UYGULANMAZ; bu çıktı "$N = ..." biçiminde değildir).
+function fileLineOf(v: string): string {
+  const m = (v ?? '').match(/Line\s+(\d+)\s+of\s+"([^"]+)"/);
+  if (!m) return '';                                   // "No line number information" / hata -> boş
+  const base = m[2].split(/[\\/]/).pop() || m[2];      // tam yol gelebilir -> HÜCREDE yalnız dosya adı göster
+  return base + ':' + m[1];                            // "threads_demo.c:156"
+}
+// Aynı çıktıdan NAVİGASYON için GDB'nin verdiği TAM/relative yolu koru ("sub/threads_demo.c:156").
+// GDB dosyayı DWARF'taki gibi (comp_dir'e göre relative, ya da mutlak) basar; basename'e indirgemek
+// aynı adlı dosyalarda yanlış dosyayı açtırır -> tıklama hedefi için ham yolu saklarız.
+function fileLinePath(v: string): string {
+  const m = (v ?? '').match(/Line\s+(\d+)\s+of\s+"([^"]+)"/);
+  return m ? m[2] + ':' + m[1] : '';
+}
+// GDB'nin verdiği dosya referansını (relative / cygwin-abs / windows-abs / basename) açılabilir adaylara çevir.
+// SAF fonksiyon (fs/workspace erişimi YOK -> test edilebilir); dosyayı bulmak çağırana kalır.
+function sourceRefCandidates(fileRef: string): { abs?: string; rel?: string; globs: string[]; base: string } {
+  let f = (fileRef || '').trim();
+  const cyg = f.match(/^\/cygdrive\/([A-Za-z])\/(.*)$/);   // /cygdrive/c/x/foo.c -> c:/x/foo.c (cppdbg cygwin gdb)
+  if (cyg) f = cyg[1] + ':/' + cyg[2];
+  f = f.replace(/\\/g, '/');                               // ayraçları normalle
+  const isAbs = /^[A-Za-z]:\//.test(f) || f.startsWith('/');
+  // yol bileşenleri; '.'/boş/'..' at (glob'da yukarı çıkılamaz; DWARF'taki fazladan ÖNEK zaten sonek denemesiyle atlanacak)
+  const parts = f.split('/').filter(p => p && p !== '.' && p !== '..');
+  const base = parts[parts.length - 1] || f;
+  // SONEK glob'ları, en UZUNDAN en kısaya: "build/obj/src/foo.c" -> **/build/obj/src/foo.c, **/obj/src/foo.c, **/src/foo.c, **/foo.c
+  // GDB yolunun BAŞINDA workspace'te olmayan fazladan bir dizin (build klasörü, proje/obj adı, prefix-map) olabilir;
+  // en uzun eşleşen soneki alarak o öneki atlarız (ve en spesifik eşleşme aynı adlı dosyalarda doğruyu seçer).
+  const seen = new Set<string>();
+  const globs: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const g = '**/' + parts.slice(i).join('/');
+    if (!seen.has(g)) { seen.add(g); globs.push(g); }
+  }
+  return { abs: isAbs ? f : undefined, rel: !isAbs ? parts.join('/') : undefined, globs, base };
+}
+// Çözülmüş kaynak yolları cache'i: GDB "yol" (satırsız) -> fsPath. Tekrar tıklama ANINDA açar (yeni tarama yok).
+const sourceUriCache = new Map<string, string>();
+// Aday dosya yollarından, GDB'nin verdiği yolla EN UZUN ortak soneki paylaşanı seç (aynı adlı dosyalarda en doğru).
+// SAF fonksiyon (test edilebilir). Ortak sonek = sondan başa eşleşen yol bileşeni sayısı; büyük-küçük harf duyarsız.
+function bestSuffixMatch(gdbPath: string, candidates: string[]): string | undefined {
+  const g = gdbPath.replace(/\\/g, '/').toLowerCase().split('/').filter(Boolean).reverse();
+  let best: string | undefined, bestScore = -1;
+  for (const c of candidates) {
+    const parts = c.replace(/\\/g, '/').toLowerCase().split('/').filter(Boolean).reverse();
+    let n = 0; while (n < g.length && n < parts.length && g[n] === parts[n]) n++;
+    if (n > bestScore) { bestScore = n; best = c; }
+  }
+  return best;
 }
 
 // --- #5 per-element batch: bir elemanı TEK 'print' ile çekip alanları parse et ---
@@ -600,17 +740,24 @@ async function collectRowFields(
   session: vscode.DebugSession, fields: FieldCfg[], frameId: number | undefined,
   rawElem: string, wrapElem: string, access: string,
   editRaw: string = rawElem, editWrap: string = wrapElem,   // __edit__ l-value için KARARLI eleman (linked'de cursor değil root->next^i)
-  index?: number,   // dizi index'i (array/index_list) / satır konumu (linked/tree) -> field expr/wrap/when'de ${index}
+  index?: number,   // ${index}: array subscript / index_list slot subscript (linked/tree/walk'ta YOK) -> expr/wrap/when/bar içinde her yerde çözülür
   depth?: number,   // ağaç derinliği (kök=0) -> ${depth} (yalnız tree modunda anlamlı)
-  master?: string   // gruplu bölümde master eleman ifadesi -> ${master} (yalnız grouped'da geçilir)
+  master?: string,   // gruplu/nested_array bölümde master (parent) eleman ifadesi -> ${master}
+  masterIdx?: string,   // master'ın subscript'i -> ${master_index} + __midx__ (nested_array; grouped'da groupBy hedefi array/index_list ise)
+  outer?: string,    // nested_array (>=3 seviye): DIŞ (1. seviye) eleman ifadesi -> ${outer}
+  outerIdx?: string,  // nested_array (>=3 seviye): DIŞ subscript -> ${outer_index} + __oidx__
+  extraVars?: Record<string, string>   // nested_array İSİMLİ token'lar: '${<ad>}' -> değer (eleman parantezli, index çıplak); uzun anahtar önce değiştirilir
 ): Promise<Row> {
-  // wrap içindeki ${index}/${depth}/${master} (resolveFieldExpr expr'i zaten çözer)
-  const subVars = (s: string) => { let r = s; if (master != null) r = r.split('${master}').join('(' + master + ')'); if (index != null) r = r.split('${index}').join(String(index)); if (depth != null) r = r.split('${depth}').join(String(depth)); return r; };
+  // wrap içindeki ${index}/${depth}/${master}/${master_index}/${outer}/${outer_index} (resolveFieldExpr expr'i zaten çözer)
+  const subVars = (s: string) => { let r = s; if (extraVars) for (const k2 of Object.keys(extraVars).sort((x, y) => y.length - x.length)) r = r.split('${' + k2 + '}').join(extraVars[k2]); if (masterIdx != null) r = r.split('${master_index}').join(masterIdx); if (master != null) r = r.split('${master}').join('(' + master + ')'); if (outerIdx != null) r = r.split('${outer_index}').join(outerIdx); if (outer != null) r = r.split('${outer}').join('(' + outer + ')'); if (index != null) r = r.split('${index}').join(String(index)); if (depth != null) r = r.split('${depth}').join(String(depth)); return r; };
   const row: Row = {};
   row['__el__'] = editWrap;   // satırın KARARLI eleman ifadesi -> "watch ifadesi olarak kopyala" (tüm modlarda geçerli)
+  if (index != null) row['__idx__'] = String(index);   // array subscript / index_list slot index -> selectedFrom detayında ${selected_index} (yalnız bu modlarda dolu)
+  if (masterIdx != null) row['__midx__'] = masterIdx;   // master'ın subscript'i -> ${selected_master_index}
+  if (outerIdx != null) row['__oidx__'] = outerIdx;   // DIŞ subscript (nested_array >=3 seviye) -> ${selected_outer_index}
   let parsed: Record<string, string> | null = null;
   let blobLen = 0, blobResolved = 0;
-  const plainCount = fields.filter(f => isPlainExpr(f.expr) && !f.wrap && !f.symbol).length;   // symbol alanı print/a ister -> batch dışı
+  const plainCount = fields.filter(f => isPlainExpr(f.expr) && !f.wrap && !f.symbol && !f.sourceLine).length;   // symbol/sourceLine alanı ayrı komut ister (print/a, info line) -> batch dışı
   if (plainCount >= 2 && !blobGuard.off) {   // blobGuard.off: bu bölümde blob GENİŞ bulundu -> hedefliye düşüldü
     const blobExpr = access === '->' ? `*(${wrapElem})` : `(${wrapElem})`;
     const raw = (await gdbExec(session, `print ${blobExpr}`, frameId)).toString();
@@ -622,30 +769,36 @@ async function collectRowFields(
     if (f.when) {
       // PERF: önce blob'dan çöz (çıplak üye / üye-vs-int); çözülemezse ayrı 'print' (eski yol)
       let wv = evalWhenFromBlob(f.when, parsed);
-      if (wv === undefined) wv = condTrue(cleanValue(await gdbExec(session, `print ${resolveFieldExpr(f.when, rawElem, wrapElem, access, index, depth, master)}`, frameId)));
+      if (wv === undefined) wv = condTrue(cleanValue(await gdbExec(session, `print ${resolveFieldExpr(f.when, rawElem, wrapElem, access, index, depth, master, masterIdx, outer, outerIdx, extraVars)}`, frameId)));
       else perf.whenFromBlob++;   // blob'dan çözüldü -> ayrı 'print' yok
       if (!wv) { row[f.label] = ''; continue; }
     }
-    let accExpr = resolveFieldExpr(f.expr, rawElem, wrapElem, access, index, depth, master);
+    let accExpr = resolveFieldExpr(f.expr, rawElem, wrapElem, access, index, depth, master, masterIdx, outer, outerIdx, extraVars);
     if (f.wrap) accExpr = subVars(f.wrap.split('${expr}').join('(' + accExpr + ')'));
     let val: string | undefined;
-    if (parsed && !f.wrap && !f.symbol && isPlainExpr(f.expr)) {
+    if (parsed && !f.wrap && !f.symbol && !f.sourceLine && isPlainExpr(f.expr)) {
       const m = structMember(parsed, f.expr);
       if (m !== undefined) { val = cleanValue(m); perf.fieldsFromBlob++; blobResolved++; }   // batch'ten (ayrı 'print' yok)
     }
     if (val === undefined) {
       if (f.symbol) val = symbolizeAddr(cleanValue(await gdbExec(session, `print/a ${accExpr}`, frameId)));   // adres -> 'func+off' sembolü
+      else if (f.sourceLine) {
+        const ilOut = await gdbExec(session, `info line *(${accExpr})`, frameId);   // adres -> kaynak konumu (ham çıktı; cleanValue YOK)
+        val = fileLineOf(ilOut);                                                    // HÜCRE: "dosya:satır" (yalnız dosya adı)
+        const full = fileLinePath(ilOut);                                           // NAVİGASYON: GDB'nin TAM/relative yolu "yol:satır"
+        if (full && full !== val) row['__src__' + f.label] = full;                  // yol basename'den farklıysa yan-kanalda taşı (doğru dosya)
+      }
       else val = cleanValue(await gdbExec(session, `print ${accExpr}`, frameId));   // fallback
     }
     row[f.label] = val;
     if (f.editable) {
       // __edit__ KARARLI eleman üzerinden (geçici cursor değil) -> set var gerçek alanı değiştirir
-      let editExpr = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth, master);
+      let editExpr = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth, master, masterIdx, outer, outerIdx, extraVars);
       if (f.wrap) editExpr = subVars(f.wrap.split('${expr}').join('(' + editExpr + ')'));
       row['__edit__' + f.label] = editExpr;
     }
     // __lv__ = düz üye alanının KARARLI l-value'su (watchpoint hedefi: 'watch <lvalue>'). Sadece düz üye (computed/wrap değil).
-    if (isPlainExpr(f.expr) && !f.wrap && !f.symbol) row['__lv__' + f.label] = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth, master);
+    if (isPlainExpr(f.expr) && !f.wrap && !f.symbol && !f.sourceLine) row['__lv__' + f.label] = resolveFieldExpr(f.expr, editRaw, editWrap, access, index, depth, master, masterIdx, outer, outerIdx, extraVars);
     if (f.bar) {
       const mx = barMaxExpr(f);
       if (mx) {
@@ -653,7 +806,7 @@ async function collectRowFields(
         if (/^\d+$/.test(mx)) bv = mx;   // sabit max
         // PERF: bar max düz bir üye ise (örn stack_size) zaten çekilmiş struct blob'undan oku -> satır başına ekstra 'print' turu YOK
         else if (parsed && isPlainExpr(mx)) { const pm = structMember(parsed, mx); if (pm !== undefined) { bv = cleanValue(pm); perf.barFromBlob++; } }
-        if (bv === undefined) bv = cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index, depth, master)}`, frameId));
+        if (bv === undefined) bv = cleanValue(await gdbExec(session, `print ${resolveFieldExpr(mx, rawElem, wrapElem, access, index, depth, master, masterIdx, outer, outerIdx, extraVars)}`, frameId));
         row['__bar__' + f.label] = bv;
       }
     }
@@ -722,10 +875,19 @@ async function collectSection(
   cursor: string,
   name: string = '',
   isStale?: () => boolean,   // iptal kancası: continue/yeni durak gelince satır döngüsünü erken bırak (çalışan hedefe print atma)
-  masterExpr?: string,   // gruplu bölümde bu grubun master eleman ifadesi -> field expr'lerinde ${master}
+  masterExpr?: string,   // gruplu/nested_array bölümde bu grubun master (parent) eleman ifadesi -> field expr'lerinde ${master}
+  masterIdx?: string,    // master'ın subscript'i -> ${master_index} + __midx__ (nested_array; grouped'da master array/index_list ise)
+  outerExpr?: string,    // nested_array (>=3 seviye): DIŞ eleman ifadesi -> ${outer}
+  outerIdx?: string,     // nested_array (>=3 seviye): DIŞ subscript -> ${outer_index} + __oidx__
+  extraVars?: Record<string, string>,   // İSİMLİ seviye token'ları (nested_array): '${<ad>}' -> değer (eleman ifadesi parantezli / index çıplak)
+  rowName?: string,      // nested_array: SATIR seviyesinin adı -> her satırda ${<ad>} = eleman, ${<ad>_index} = i
   onProgress?: (rows: Row[]) => void   // satır akışı: satırlar biriktikçe (throttle'lı) çağrılır -> webview kısmi tabloyu çizer
 ): Promise<Row[]> {
   const rows: Row[] = [];
+  if ((cfg.mode as string) === 'nested_array') {   // nested_array buildArrayNd ile kurulur; buraya düşmesi = groupBy master / düz bölüm yanlış kullanımı
+    log?.warn(`"${name}": nested_array bölüm groupBy master'ı olarak ya da düz bölüm gibi kullanılamaz`);
+    return rows;
+  }
   const max = cfg.max ?? 1024;
   blobGuard = { off: false, decided: false, len: 0, resolved: 0 };   // bölüm başı: blob kararını sıfırla (ilk satırda yeniden verilir)
   // Akış: her satırdan sonra, en çok ~her STREAM_MS bir kez, o ana kadarki satırları yayınla (postMessage selini önler).
@@ -744,7 +906,9 @@ async function collectSection(
       // eleman: ((cast*)root)[i]; field'a erişmeden ÖNCE wrap ile sarmalanır
       const elemRaw = `${base}[${i}]`;
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + elemRaw + ')') + ')' : elemRaw; // (wrap)<access>field
-      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, i, undefined, masterExpr));   // ${index} = i (dizi index'i)
+      // isimli SATIR token'ı (nested_array): ${<rowName>} = bu satırın elemanı, ${<rowName>_index} = i
+      const rowVars = rowName ? { ...(extraVars || {}), [rowName]: '(' + elem + ')', [rowName + '_index']: String(i) } : extraVars;   // eleman WRAPPED haliyle (grup token'ları ve ${master} ile tutarlı)
+      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, i, undefined, masterExpr, masterIdx, outerExpr, outerIdx, rowVars));   // ${index} = i (dizi index'i)
       emit();
     }
   } else if (cfg.mode === 'index_list') {
@@ -778,7 +942,7 @@ async function collectSection(
       const elemRaw = `${base}[${idx}]`;
       // field'a erişmeden ÖNCE wrap ile sarmalanır (çıktı parantezlenir: (wrap)<access>field)
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + elemRaw + ')') + ')' : elemRaw;
-      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, fromIdx, undefined, masterExpr));   // ${index} = bu slotun dizi index'i
+      rows.push(await collectRowFields(session, cfg.fields, frameId, elemRaw, elem, access, elemRaw, elem, fromIdx, undefined, masterExpr, masterIdx, outerExpr, outerIdx, extraVars));   // ${index} = bu slotun dizi index'i
       emit();
       // next şablonu: ${expr}=ham eleman (wrap ile aynı), ${wrapped_expr}=wrap/cast'li eleman; yoksa elem<access>next
       const hasTpl = cfg.next && (cfg.next.indexOf('${expr}') !== -1 || cfg.next.indexOf('${wrapped_expr}') !== -1);
@@ -811,7 +975,7 @@ async function collectSection(
       // elemana erişmeden ÖNCE wrap; kararlı yol ifadesi (root->left->right...) edit/watch için
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + node.expr + ')') + ')' : node.expr;
       const myIdx = rows.length;
-      const row = await collectRowFields(session, cfg.fields, frameId, node.expr, elem, '->', node.expr, elem, undefined, node.depth, masterExpr);   // ağaçta ${index} YOK (gerçek dizi index'i değil); ${depth} = derinlik (kök=0); ${master} grouped ağaçta geçerli
+      const row = await collectRowFields(session, cfg.fields, frameId, node.expr, elem, '->', node.expr, elem, undefined, node.depth, masterExpr, masterIdx, outerExpr, outerIdx, extraVars);   // ağaçta ${index} YOK (gerçek dizi index'i değil); ${depth} = derinlik (kök=0); ${master} grouped ağaçta geçerli
       row['__parent__'] = node.parent < 0 ? '' : String(node.parent);
       rows.push(row);
       emit();
@@ -853,7 +1017,7 @@ async function collectSection(
       // kürsör. Böylece array/linked gibi walk'ta da cast/wrap/${wrapped_expr} geçerli (eskiden sessizce yok sayılırdı).
       // editRaw/editWrap = KARARLI sembolik eleman (sRaw); master selExpr ve "watch ifadesi kopyala" donmuş adres almasın.
       // masterExpr de geçilir -> walk-as-grouped-child alanlarında ${master} çözülür (eskiden geçilmiyordu).
-      rows.push(await collectRowFields(session, cfg.fields, frameId, cur, wrapCur(cur), access, sRaw, wrapCur(sRaw), undefined, undefined, masterExpr));
+      rows.push(await collectRowFields(session, cfg.fields, frameId, cur, wrapCur(cur), access, sRaw, wrapCur(sRaw), undefined, undefined, masterExpr, masterIdx, outerExpr, outerIdx, extraVars));
       emit();
       if (!cfg.next) { reason = 'no next'; break; }
       const nxw = cleanValue(await gdbExec(session, `print ${subC(cfg.next, cur)}`, frameId));
@@ -869,12 +1033,15 @@ async function collectSection(
     let reason = 'end';
     const nx = cfg.next ?? 'next';
     const needStable = true;   // kararlı zincir (root->next^i): edit l-value VE 'watch ifadesi kopyala' için her satırda gerekli
+    const seenL: Record<string, boolean> = {};   // adres -> görüldü: DÖNGÜ koruması (dairesel/bozuk liste max'a kadar sürünmesin; walk/tree'de vardı, linked'de eksikti)
     // #2: cursor=root + ilk değer (null-check) TEK çağrıda; düğüm başına ayrı 'print cursor' turu yok
     let cur = cleanValue(await gdbExec(session, `print ${cursor} = ${cfg.root}`, frameId));
     while (true) {
       if (isStale && isStale()) { reason = 'stale (resumed/superseded)'; break; }
       if (guard++ >= max) { reason = `max bound (${max})`; break; }
       if (isNull(cur)) { reason = 'reached NULL'; break; }
+      const amL = cur.match(/0x[0-9a-fA-F]+/);   // düğüm adresi (değer '(T *) 0x.. <sym>' biçiminde)
+      if (amL) { if (seenL[amL[0]]) { reason = `cycle (node ${amL[0]} repeats)`; break; } seenL[amL[0]] = true; }
       // node (cursor); field'a erişmeden ÖNCE wrap ile sarmalanır
       const elem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + cursor + ')') + ')' : cursor; // (wrap)->field
       // KARARLI eleman (cursor'a bağlı değil): root(->next)^index — edit sonrası set var doğru alana yazsın
@@ -883,7 +1050,7 @@ async function collectSection(
         sRaw = cfg.root; for (let k = 0; k < rows.length; k++) sRaw = sRaw + '->' + nx;
         sElem = cfg.wrap ? '(' + cfg.wrap.split('${expr}').join('(' + sRaw + ')') + ')' : sRaw;
       }
-      rows.push(await collectRowFields(session, cfg.fields, frameId, cursor, elem, '->', sRaw, sElem, undefined, undefined, masterExpr));   // linked_list'te ${index} YOK; ${master} grouped'da geçerli
+      rows.push(await collectRowFields(session, cfg.fields, frameId, cursor, elem, '->', sRaw, sElem, undefined, undefined, masterExpr, masterIdx, outerExpr, outerIdx, extraVars));   // linked_list'te ${index} YOK; ${master} grouped'da geçerli
       emit();
       log.trace(`linked_list "${name}" node ${guard - 1}: cursor=${cur} → advance via ${cursor}->${cfg.next}`);
       // #2: advance + sonraki değeri (null-check) TEK çağrıda — eski 'set' + ayrı 'print cursor' yerine
@@ -966,16 +1133,27 @@ function barMaxExpr(f: FieldCfg): string {
 // Alan/bar ifadesini GDB print ifadesine çevir. ${expr}=ham eleman, ${wrapped_expr}=wrap/cast'li eleman
 // (wrap/next ile AYNI semantik) -> elemanı birden çok kez referanslayan aritmetik (örn stack_top - stack_base) mümkün.
 // Yer tutucu yoksa varsayılan: (wrap'li eleman)<access><ifade>.
-function resolveFieldExpr(expr: string, rawElem: string, wrappedElem: string, access: string, index?: number, depth?: number, master?: string): string {
+function resolveFieldExpr(expr: string, rawElem: string, wrappedElem: string, access: string, index?: number, depth?: number, master?: string, masterIdx?: string, outer?: string, outerIdx?: string, extraVars?: Record<string, string>): string {
   const hasIdx = index != null && expr.indexOf('${index}') !== -1;
   const hasDepth = depth != null && expr.indexOf('${depth}') !== -1;
   const hasMaster = master != null && expr.indexOf('${master}') !== -1;
-  // ${expr}/${wrapped_expr}/${index}/${depth}/${master} -> STANDALONE ifade (elemana eklenmez).
-  // ${index} = dizi index'i (array/index_list) ya da satır konumu (linked/tree BFS); ${depth} = ağaç derinliği (kök=0);
-  // ${master} = gruplu bölümde bu satırın AİT OLDUĞU master elemanı (erişimi kullanıcı yazar: ${master}->name).
-  if (expr.indexOf('${expr}') !== -1 || expr.indexOf('${wrapped_expr}') !== -1 || hasIdx || hasDepth || hasMaster) {
+  const hasMasterIdx = masterIdx != null && expr.indexOf('${master_index}') !== -1;
+  const hasOuter = outer != null && expr.indexOf('${outer}') !== -1;
+  const hasOuterIdx = outerIdx != null && expr.indexOf('${outer_index}') !== -1;
+  // İSİMLİ seviye token'ları (nested_array): expr'de geçen '${<ad>}' anahtarları (uzun anahtar önce -> alt-dizgi çakışması olmaz)
+  const evKeys = extraVars ? Object.keys(extraVars).filter(k2 => expr.indexOf('${' + k2 + '}') !== -1).sort((x, y) => y.length - x.length) : [];
+  // ${expr}/${wrapped_expr}/${index}/${depth}/${master}/${master_index} -> STANDALONE ifade (elemana eklenmez).
+  // ${index} = dizi index'i (array) / slot index'i (index_list) / SATIR subscript'i (nested_array); linked/tree/walk'ta YOK;
+  // ${depth} = ağaç derinliği (kök=0); ${master} = satırın AİT OLDUĞU master/dış eleman (erişimi kullanıcı yazar);
+  // ${master_index} = master'ın subscript'i (nested_array parent index; grouped'da groupBy hedefi array/index_list ise).
+  // Not: '${master}' ile '${master_index}' substring ÇAKIŞMAZ ('master}' vs 'master_') -> sıra önemsiz.
+  if (expr.indexOf('${expr}') !== -1 || expr.indexOf('${wrapped_expr}') !== -1 || hasIdx || hasDepth || hasMaster || hasMasterIdx || hasOuter || hasOuterIdx || evKeys.length) {
     let e = expr.split('${wrapped_expr}').join('(' + wrappedElem + ')').split('${expr}').join('(' + rawElem + ')');
+    for (const k2 of evKeys) e = e.split('${' + k2 + '}').join(extraVars![k2]);
+    if (masterIdx != null) e = e.split('${master_index}').join(masterIdx);
     if (master != null) e = e.split('${master}').join('(' + master + ')');
+    if (outerIdx != null) e = e.split('${outer_index}').join(outerIdx);   // nested_array DIŞ subscript — SATIR ANINDA çözülür (ön-yerleştirme değil: token'sız kalan ifade elemana eklenirdi -> ".0" sözdizimi hatası)
+    if (outer != null) e = e.split('${outer}').join('(' + outer + ')');   // nested_array DIŞ eleman
     if (index != null) e = e.split('${index}').join(String(index));
     if (depth != null) e = e.split('${depth}').join(String(depth));
     return e;
@@ -1002,6 +1180,10 @@ function fieldLinks(fields: FieldCfg[]): Record<string, { section: string; match
   const m: Record<string, { section: string; match?: string }> = {};
   for (const f of fields) if (f.link && f.link.section) m[f.label] = { section: f.link.section, match: f.link.match };
   return m;
+}
+// sourceLine kolonlarının etiketleri -> istemci bu kolonların "dosya:satır" hücrelerini tıklanabilir (kaynağa git) yapar
+function fieldSrcCols(fields: FieldCfg[]): string[] {
+  return fields.filter(f => f.sourceLine).map(f => f.label);
 }
 // Kolon -> değer->renk rozet eşlemesi (field.badge verilmişse)
 function fieldBadges(fields: FieldCfg[]): Record<string, Record<string, string>> {
@@ -1062,7 +1244,8 @@ async function buildSection(
   cursor: string,
   name: string,
   isStale?: () => boolean,
-  onStream?: (sec: Section) => void   // satır akışı: satırlar geldikçe kısmi Section yayınla (sunum salt-okunur; tablo başlığı + çubuk/link meta'sı baştan hazır)
+  onStream?: (sec: Section) => void,   // satır akışı: satırlar geldikçe kısmi Section yayınla (sunum salt-okunur; tablo başlığı + çubuk/link meta'sı baştan hazır)
+  extraVars?: Record<string, string>   // detay bölümü: ${selected}/${selected_index}/... satır-anı değerleri
 ): Promise<Section> {
   warnMasterMisuseIfAny(name, cfg);   // gruplu OLMAYAN bölümde ${master} kullanılmışsa uyar (çözülmez)
   const eff = effectiveColumns(name, cfg.fields);
@@ -1071,10 +1254,10 @@ async function buildSection(
     .filter((f): f is FieldCfg => !!f);
   const kind: 'linked' | 'array' | 'index' | 'tree' = cfg.mode === 'array' ? 'array' : cfg.mode === 'index_list' ? 'index' : cfg.mode === 'tree' ? 'tree' : 'linked';
   // GDB gerektirmeyen sunum meta'sı (kolonlar + çubuk/link/rozet/...) — bir kez hesapla, hem akışta hem son halde kullan.
-  const meta = { columnsAll: eff.order, hidden: eff.hidden, bases: fieldBases(cfg.fields), bars: fieldBars(cfg.fields), links: fieldLinks(cfg.fields), badges: fieldBadges(cfg.fields), valueMap: fieldValueMap(cfg.fields), flags: fieldFlags(cfg.fields), kind };
+  const meta = { columnsAll: eff.order, hidden: eff.hidden, bases: fieldBases(cfg.fields), bars: fieldBars(cfg.fields), links: fieldLinks(cfg.fields), badges: fieldBadges(cfg.fields), valueMap: fieldValueMap(cfg.fields), flags: fieldFlags(cfg.fields), srcCols: fieldSrcCols(cfg.fields), timeline: cfg.timeline, kind };
   const onProgress = onStream ? (rs: Row[]) => onStream({ name, ...meta, rows: rs.slice(), summary: '' }) : undefined;
   perfSectionStart();
-  const rows = await collectSection(session, { ...cfg, fields: effFields }, frameId, cursor, name, isStale, undefined, onProgress);
+  const rows = await collectSection(session, { ...cfg, fields: effFields }, frameId, cursor, name, isStale, undefined, undefined, undefined, undefined, extraVars, undefined, onProgress);
   log?.debug(`section "${name}" (${cfg.mode}, root=${cfg.root}): ${rows.length} row(s); active=[${eff.active.join(', ')}]`);
   perfSectionEnd(name);
   return { name, ...meta, rows, summary: summarize(name, rows) };
@@ -1123,24 +1306,50 @@ function masterSelExprs(sec: Section, cfg: SectionCfg): string[] {
 function isGrouped(cfg: SectionCfg): boolean {
   return typeof cfg.groupBy === 'string' && cfg.groupBy.length > 0;
 }
+// Çok seviyeli dizi bölümü mü? (nested_array — buildArrayNd ile kurulur; groupBy master'ı olamaz)
+function isMultiArray(cfg: SectionCfg): boolean {
+  return cfg.mode === 'nested_array';
+}
 // Talep-üzerine detay bölümü mü? (selectedFrom verilmişse sekme DEĞİL; sağ-tık ile bir master satırı için kurulur)
 function isDetail(cfg: SectionCfg): boolean {
   return typeof cfg.selectedFrom === 'string' && cfg.selectedFrom.length > 0;
 }
-// ${selected} = seçilen master satırın kararlı eleman ifadesi (data-el/__el__). Detay bölümünün TÜM ifadelerinde değiştir.
-function substituteSelected(cfg: SectionCfg, sel: string): SectionCfg {
-  const sub = (s: string | undefined): string | undefined =>
-    s == null ? s : s.split('${selected}').join('(' + sel + ')');
+// Detay config'i ${selected_index} / ${selected_master_index} kullanıyor mu? (tüm string alanları tarar — hata kontrolü için)
+// Not: '${selected_index}', '${selected_master_index}' içinde substring DEĞİL ('selected_i' vs 'selected_m') -> tespitler bağımsız.
+function usesSelectedIndex(cfg: SectionCfg): boolean {
+  return JSON.stringify(cfg).indexOf('${selected_index}') !== -1;
+}
+function usesSelectedMasterIndex(cfg: SectionCfg): boolean {
+  return JSON.stringify(cfg).indexOf('${selected_master_index}') !== -1;
+}
+function usesSelectedOuterIndex(cfg: SectionCfg): boolean {
+  return JSON.stringify(cfg).indexOf('${selected_outer_index}') !== -1;
+}
+// ${selected} = seçilen master satırın kararlı eleman ifadesi (data-el/__el__); ${selected_index} = o satırın index'i
+// (array/index_list/nested_array); ${selected_master_index} = satırın GRUBUNUN/parent'ının index'i (gruplu master +
+// groupBy hedefi array/index_list, ya da nested_array); ${selected_outer_index} = DIŞ index (yalnız nested_array >=3 seviye).
+// Koşullar sağlanmazsa refreshDetail AÇIK hata verir. TÜM ifadelerde değiştir.
+// Not: token'lar birbirinin substring'i DEĞİL ('selected}'/'selected_i'/'selected_m'/'selected_o') -> sıra önemsiz.
+function substituteSelected(cfg: SectionCfg, sel: string, selIndex?: string, selMasterIndex?: string, selOuterIndex?: string): SectionCfg {
+  const sub = (s: string | undefined): string | undefined => {
+    if (s == null) return s;
+    let r = s.split('${selected}').join('(' + sel + ')');
+    if (selIndex != null) r = r.split('${selected_index}').join(selIndex);
+    if (selMasterIndex != null) r = r.split('${selected_master_index}').join(selMasterIndex);
+    if (selOuterIndex != null) r = r.split('${selected_outer_index}').join(selOuterIndex);
+    return r;
+  };
   return {
     ...cfg,
     root: sub(cfg.root) as string,
     start: sub(cfg.start), next: sub(cfg.next), while: sub(cfg.while),
     head: sub(cfg.head), nil: sub(cfg.nil), count: sub(cfg.count),
+    levels: cfg.levels ? cfg.levels.map(l => ({ ...l, array: sub(l.array), count: sub(l.count), label: sub(l.label), wrap: sub(l.wrap) })) : cfg.levels,   // nested_array detayı: seviye ifadeleri ${selected}* taşıyabilir
     wrap: sub(cfg.wrap), cast: cfg.cast,
-    fields: (cfg.fields || []).map(f => ({
-      ...f, expr: sub(f.expr) as string, wrap: sub(f.wrap), when: sub(f.when),
-      bar: typeof f.bar === 'string' ? sub(f.bar) : f.bar
-    }))
+    // ALANLARA (expr/wrap/when/bar) BİLEREK dokunulmaz: ${selected*} token'ları satır anında extraVars ile
+    // çözülür (refreshDetail -> buildSection/buildArrayNd). Ön-yerleştirme, token'sız kalan ifadeyi
+    // elemana ekletip bozuyordu (örn "${selected_index}" -> "5" -> elem.5 GDB sözdizimi hatası).
+    fields: cfg.fields
   };
 }
 function substituteMaster(expr: string, sel: string): string {
@@ -1176,7 +1385,7 @@ async function buildGrouped(
     .filter((f): f is FieldCfg => !!f);
   // GDB gerektirmeyen sunum meta'sı — bir kez hesapla (akış emisyonları + son hal aynı meta'yı kullanır).
   const gkind: 'linked' | 'array' | 'index' | 'tree' = scfg.mode === 'array' ? 'array' : scfg.mode === 'index_list' ? 'index' : scfg.mode === 'tree' ? 'tree' : 'linked';
-  const meta = { columnsAll: eff.order, hidden: eff.hidden, grouped: true as const, kind: gkind, bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields), links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields), flags: fieldFlags(scfg.fields) };
+  const meta = { columnsAll: eff.order, hidden: eff.hidden, grouped: true as const, kind: gkind, bases: fieldBases(scfg.fields), bars: fieldBars(scfg.fields), links: fieldLinks(scfg.fields), badges: fieldBadges(scfg.fields), valueMap: fieldValueMap(scfg.fields), flags: fieldFlags(scfg.fields), srcCols: fieldSrcCols(scfg.fields), timeline: scfg.timeline };
   const m = masters[scfg.groupBy as string];
   if (!m || !m.sec.rows.length) {
     log?.warn(`grouped "${name}": master "${scfg.groupBy}" not found or empty`);
@@ -1202,7 +1411,10 @@ async function buildGrouped(
       while: scfg.while ? substituteMaster(scfg.while, selExpr) : scfg.while,
       next: scfg.next ? substituteMaster(scfg.next, selExpr) : scfg.next
     };
-    const rows = await collectSection(session, subCfg, frameId, '$rg_' + i + '_' + mi, name, isStale, selExpr);   // ${master} = bu grubun master elemanı (field expr'lerinde)
+    // grubun master satırı bir subscript taşıyorsa (master 'array'/'index_list') satırlara geçir ->
+    // field'larda ${master_index} + selectedFrom detayında ${selected_master_index} (collectRowFields __midx__ damgalar)
+    const mIdx = (m.sec.rows[mi] || {})['__idx__'];
+    const rows = await collectSection(session, subCfg, frameId, '$rg_' + i + '_' + mi, name, isStale, selExpr, mIdx);   // ${master} = bu grubun master elemanı
     const key = rowKeyAt(m.sec, mi) ?? String(mi);
     const label = m.cfg.label
       ? nodeLabel(cleanValue(await gdbExec(session, `print (${selExpr})${masterAcc}${m.cfg.label}`, frameId)))
@@ -1217,6 +1429,143 @@ async function buildGrouped(
 }
 
 // ---------------------------------------------------------------------------
+// nested_array: ÇOK SEVİYELİ dizi (2, 3, ... N seviye). levels[0] = en dış, SON seviye = SATIRLAR;
+// son seviyeden önceki her seviye kombinasyonu bir GRUP olur (başlık: label parçalarının ' › ' birleşimi;
+// son grup-seviyesinin label'ı ŞABLONSA başlığın tamamı odur). Ayrı master bölüm GEREKMEZ (groupBy'dan farkı).
+// İç toplama collectSection'ın array dalıyla yapılır -> blob batch / satır akışı / iptal (isStale) aynen geçerli.
+// Token'lar: ${index}=satır subscript'i, ${master}/${master_index}=satırın PARENT'ı, ${outer}/${outer_index}=en dış
+// (>=3 seviyede); 'name' verilen seviyeler için ${<ad>} / ${<ad>_index}. selectedFrom bu bölümü master alırsa:
+// ${selected_index}=satır, ${selected_master_index}=parent, ${selected_outer_index}=en dış (>=3 seviye).
+// ---------------------------------------------------------------------------
+// Parça ifade çözücü: iç dizi kökü / sayaç, PARENT elemana göre.
+//  - "${expr}" içeriyorsa şablon (${expr} = parent eleman)      örn "${expr}" -> parent'ın KENDİSİ dizi kökü
+//  - tamamı rakamsa sabit                                        örn "4"
+//  - "::" ile başlıyorsa GLOBAL ifade (parent'a bağlanmaz)       örn "::g_jobs_per_core"
+//  - aksi halde parent üzerinde accessor                         örn "items" -> (parent).items / (parent)->items
+function resolvePart(tpl: string, parent: string, access: string): string {
+  tpl = String(tpl);   // config'ten JSON SAYISI gelebilir ("innerCount": 4) -> string'e zorla (aksi halde .indexOf TypeError -> tüm refresh ölürdü)
+  if (tpl.indexOf('${expr}') !== -1) return tpl.split('${expr}').join('(' + parent + ')');
+  if (/^\d+$/.test(tpl)) return tpl;
+  if (tpl.startsWith('::')) return tpl.slice(2);
+  return `${parent}${access}${tpl}`;
+}
+// nested_array config'ini seviye listesine çevir (levels[0] = en dış, son = SATIRLAR).
+// İlk seviyenin array/count/access/label/cast/wrap'i verilmemişse bölüm kökündeki eşdeğerlerinden tamamlanır.
+function normalizeLevels(cfg: SectionCfg): LevelCfg[] | undefined {
+  if (cfg.mode === 'nested_array') {
+    const ls = Array.isArray(cfg.levels) ? cfg.levels.map(l => ({ ...l })) : [];
+    if (ls.length) {
+      ls[0].array = ls[0].array ?? cfg.root; ls[0].count = ls[0].count ?? cfg.count;
+      ls[0].access = ls[0].access ?? cfg.access; ls[0].label = ls[0].label ?? cfg.label;
+      ls[0].cast = ls[0].cast ?? cfg.cast; ls[0].wrap = ls[0].wrap ?? cfg.wrap;
+    }
+    return ls;
+  }
+  return undefined;
+}
+// İsimli seviye token'ları başka anahtarlarla çakışmasın
+const RESERVED_TOKEN_NAMES = ['expr', 'wrapped_expr', 'index', 'depth', 'master', 'master_index', 'outer', 'outer_index', 'selected', 'selected_index', 'selected_master_index', 'selected_outer_index'];
+async function buildArrayNd(
+  session: vscode.DebugSession,
+  frameId: number | undefined,
+  name: string,
+  cfg: SectionCfg,
+  isStale?: () => boolean,
+  onStream?: (sec: Section) => void,   // grup akışı: her grup tamamlandıkça kısmi Section yayınla (throttle'lı)
+  detailVars?: Record<string, string>   // detay bölümü: ${selected*} satır-anı değerleri (isimli seviye token'larıyla birleşir)
+): Promise<Section> {
+  const eff = effectiveColumns(name, cfg.fields);
+  const effFields = eff.active
+    .map(l => cfg.fields.find(f => f.label === l))
+    .filter((f): f is FieldCfg => !!f);
+  const meta = { columnsAll: eff.order, hidden: eff.hidden, grouped: true as const, kind: 'array' as const, bases: fieldBases(cfg.fields), bars: fieldBars(cfg.fields), links: fieldLinks(cfg.fields), badges: fieldBadges(cfg.fields), valueMap: fieldValueMap(cfg.fields), flags: fieldFlags(cfg.fields), srcCols: fieldSrcCols(cfg.fields), timeline: cfg.timeline };
+  const fail = (emsg: string): Section => { log?.warn(`${cfg.mode} "${name}": ${emsg}`); return { name, ...meta, rows: [], summary: '', groups: [], error: emsg }; };
+  const levels = normalizeLevels(cfg);
+  if (!levels || levels.length < 2) return fail(`mode "nested_array" requires at least 2 levels in 'levels'`);
+  for (let k = 0; k < levels.length; k++) {
+    if (levels[k].array == null || levels[k].array === '' || levels[k].count == null || levels[k].count === '') return fail(`level ${k}${levels[k].name ? ` ("${levels[k].name}")` : ''}: 'array' ve 'count' zorunlu`);
+  }
+  const names = levels.map(l => l.name).filter((s): s is string => !!s);
+  if (new Set(names).size !== names.length) return fail(`level 'name' değerleri benzersiz olmalı`);
+  // ad kuralları: tanımlayıcı olmalı; rezerve olamaz; '_index' ile BİTEMEZ (türetilmiş ${<ad>_index} token'larını gölgeler);
+  // türetilmiş <ad>_index başka bir adla ya da rezerve bir token'la çakışamaz (örn ad "selected_master" -> ${selected_master_index} hijack olurdu)
+  const badName = names.find(n2 => RESERVED_TOKEN_NAMES.includes(n2) || !/^[A-Za-z_]\w*$/.test(n2)
+    || /_index$/.test(n2) || names.includes(n2 + '_index') || RESERVED_TOKEN_NAMES.includes(n2 + '_index'));
+  if (badName) return fail(`level adı "${badName}" kullanılamaz (rezerve token, '_index' soneki ya da geçersiz tanımlayıcı)`);
+  const L = levels.length;
+  if (levels[L - 1].label) log?.warn(`nested_array "${name}": son seviyeye (satırlar) verilen 'label' yok sayılır — satırların başlığı yoktur (timeline blok metni için 'timeline.label' kullanın)`);
+  const max = cfg.max ?? 1024;   // toplam satır sınırı (en iç elemanların toplamı)
+  perfSectionStart();
+  const groups: Group[] = [];
+  let total = 0, lastEmit = 0;
+  const emit = () => { if (!onStream || !groups.length) return; const now = Date.now(); if (now - lastEmit >= 80) { lastEmit = now; onStream({ name, ...meta, rows: [], groups: groups.slice(), summary: '' }); } };
+  // label ŞABLONU: '${' içeren label GDB'siz METİN şablonudur. Token'lar: her üst seviyenin ${<name>_index}'i,
+  // ${index} = etiketlenen elemanın KENDİ subscript'i, ${outer_index} = en dış, ${master_index} = ${index} eş anlamlısı.
+  // '${' YOKSA accessor: eleman üzerinde GDB ile okunur. Örn: "core ${core_index} -> job ${job_index}".
+  const isLblTpl = (s?: string) => s != null && s.indexOf('${') !== -1;
+  const lblText = (tpl: string, idxsInc: number[], k: number): string => {
+    let r = tpl;
+    for (let j = 0; j <= k; j++) { const nm = levels[j].name; if (nm) r = r.split('${' + nm + '_index}').join(String(idxsInc[j])); }
+    return r.split('${outer_index}').join(String(idxsInc[0])).split('${master_index}').join(String(idxsInc[k])).split('${index}').join(String(idxsInc[k]));
+  };
+  log?.debug(`${cfg.mode} "${name}": ${L} level(s) [${levels.map((l, i) => l.name ?? ('level' + i)).join(' > ')}]`);
+  // Genel N-seviye yürüyüş: seviye k'nin dizisini gez; son seviyeden bir ÖNCEKİ seviyenin her elemanı bir GRUP olur,
+  // son seviye elemanları o grubun SATIRLARIDIR (collectSection array dalı -> blob batch / akış / iptal aynen geçerli).
+  const walk = async (k: number, rootExpr: string, idxs: number[], elems: string[], labelParts: string[]): Promise<void> => {
+    const lv = levels[k];
+    const parentAcc = k > 0 ? (levels[k - 1].access ?? '.') : '.';
+    const cntExpr = k === 0 ? (lv.count as string) : resolvePart(lv.count as string, elems[k - 1], parentAcc);
+    const cntRaw = cleanValue(await gdbExec(session, `print ${cntExpr}`, frameId));
+    const cnt = parseInt(cntRaw, 10) || 0;
+    const base = lv.cast ? `((${lv.cast})(${rootExpr}))` : `(${rootExpr})`;
+    for (let i = 0; i < Math.min(cnt, max) && total < max; i++) {   // grup seviyeleri de max ile klemplenir (bozuk sayaç -> sınırsız GDB turu olmasın)
+      if (isStale && isStale()) return;   // continue/yeni durak/bölüm kapatıldı -> erken bırak
+      const elemRaw = `${base}[${i}]`;
+      const elem = lv.wrap ? '(' + lv.wrap.split('${expr}').join('(' + elemRaw + ')') + ')' : elemRaw;
+      const gIdxs = [...idxs, i], gElems = [...elems, elem];
+      const lbl = lv.label
+        ? (isLblTpl(lv.label) ? lblText(lv.label, gIdxs, k)
+                              : nodeLabel(cleanValue(await gdbExec(session, `print (${elem})${lv.access ?? '.'}${lv.label}`, frameId))))
+        : String(i);
+      if (k < L - 2) {
+        const childRoot = resolvePart(levels[k + 1].array as string, elem, lv.access ?? '.');
+        await walk(k + 1, childRoot, gIdxs, gElems, [...labelParts, lbl]);
+        continue;
+      }
+      // k == L-2: elem = SATIRLARIN parent'ı -> son seviyeyi topla
+      const rowLv = levels[L - 1];
+      const rowsRoot = resolvePart(rowLv.array as string, elem, lv.access ?? '.');
+      const rowsCount = resolvePart(rowLv.count as string, elem, lv.access ?? '.');
+      const subCfg: SectionCfg = { mode: 'array', root: rowsRoot, count: rowsCount, access: rowLv.access ?? '.', cast: rowLv.cast, wrap: rowLv.wrap, max: Math.max(0, max - total), fields: effFields };
+      // İSİMLİ token'lar: her grup seviyesi j için ${<name>} = eleman, ${<name>_index} = subscript (SATIR seviyesinin
+      // isimli token'ları collectSection'da satır başına üretilir). Legacy: ${master}=parent, ${outer}=en dış (3+ seviye).
+      const vars: Record<string, string> = { ...(detailVars || {}) };
+      for (let j = 0; j < gElems.length; j++) { const nm = levels[j].name; if (nm) { vars[nm] = '(' + gElems[j] + ')'; vars[nm + '_index'] = String(gIdxs[j]); } }
+      const rows = await collectSection(session, subCfg, frameId, '$rn_' + gIdxs.join('_'), name, isStale,
+        elem, String(i),
+        L >= 3 ? gElems[0] : undefined, L >= 3 ? String(gIdxs[0]) : undefined,
+        vars, rowLv.name,
+        undefined);
+      total += rows.length;
+      // grup başlığı: SON grup-seviyesinin label'ı ŞABLONSA başlığın tamamıdır (üst indexleri kendisi gömebilir);
+      // değilse üst parçalarla ' › ' birleşimi.
+      const header = (lv.label && isLblTpl(lv.label)) ? lbl : [...labelParts, lbl].join(' › ');
+      groups.push({ label: header, key: gIdxs.join('.'), rows });
+      emit();
+    }
+  };
+  try {
+    await walk(0, String(levels[0].array), [], [], []);
+  } catch (e: any) {
+    perfSectionEnd(name);
+    return fail(`traversal failed: ${e?.message ?? e}`);
+  }
+  log?.debug(`${cfg.mode} "${name}": ${groups.length} group(s), ${total} row(s)`);
+  perfSectionEnd(name);
+  return { name, ...meta, rows: [], summary: `${total} ${name} · ${groups.length} groups`, groups };
+}
+
+// ---------------------------------------------------------------------------
 // Yenileme
 // ---------------------------------------------------------------------------
 // Bir bölümün VERİYİ etkileyen imzası (GDB'den ne çekildiğini belirleyen alanlar).
@@ -1227,8 +1576,10 @@ function dataSig(cfg: SectionCfg): string {
     mode: cfg.mode, root: cfg.root, next: cfg.next, head: cfg.head, nil: cfg.nil,
     count: cfg.count, access: cfg.access, cast: cfg.cast, wrap: cfg.wrap,
     start: cfg.start, while: cfg.while,
+    levels: cfg.levels,
+    tlset: (cfg.timeline && cfg.timeline.set) ? cfg.timeline.set : null,   // timeline.set VERİ çeker (her blok elemanının alt dizisi) -> imzaya dahil (yalnız sunum DEĞİL)
     groupBy: cfg.groupBy, max: cfg.max, label: cfg.label,
-    fields: (cfg.fields || []).map(f => ({ l: f.label, e: f.expr, w: f.wrap, wn: f.when, bm: barMax(f.bar), ed: !!f.editable, h: !!f.hidden, sym: !!f.symbol }))
+    fields: (cfg.fields || []).map(f => ({ l: f.label, e: f.expr, w: f.wrap, wn: f.when, bm: barMax(f.bar), ed: !!f.editable, h: !!f.hidden, sym: !!f.symbol, sl: !!f.sourceLine }))
   });
 }
 // sekme sırası + etkin gizli küme (refresh ile aynı kurallar)
@@ -1246,6 +1597,66 @@ function fingerprintOf(secs: { name: string; cfg: SectionCfg }[], lay: { order: 
   return JSON.stringify({ o: lay.order, h: [...lay.hiddenSet].sort(), s: secs.map(x => [x.name, dataSig(x.cfg)]) });
 }
 let lastFingerprint = '';
+
+// timeline.set'i her zaman DİZİ olarak normalle (tek nesne -> [nesne]); geçersiz/eksik olanları at.
+function normalizeSets(set: TlSetDef | TlSetDef[] | undefined): TlSetDef[] {
+  const arr = Array.isArray(set) ? set : (set ? [set] : []);
+  return arr.filter(s => s && s.array && s.count != null && (s.count as any) !== '');
+}
+// ⏱ timeline.set: her BLOK satırına, satırın kararlı eleman ifadesi (__el__) üzerinden okunan ALT diziLERİ ekle
+// -> row['__tlsets__'] = [{title, items:string[], dashes:boolean[]}] (örn part'ın device/signal kümeleri; BİRDEN ÇOK olabilir).
+// Timeline görünümü bunları blok içinde ayrı chip satırları çizer. View toggle client-side -> veri BURADA toplanır, satırla gider.
+// PARENT = blok elemanı; array/count parça sözdizimidir (accessor '.' | sabit | "::global" | "${expr}" şablonu; pointer eleman için "${expr}->dizi").
+async function attachTimelineSet(session: vscode.DebugSession, frameId: number | undefined, sec: Section, cfg: SectionCfg, isStale?: () => boolean): Promise<void> {
+  const sets = normalizeSets(cfg.timeline && cfg.timeline.set);
+  if (!sets.length) return;
+  const rows: Row[] = sec.grouped ? (sec.groups || []).reduce<Row[]>((a, g) => a.concat(g.rows || []), []) : (sec.rows || []);
+  for (const row of rows) {
+    if (isStale && isStale()) return;
+    const el = row['__el__'];
+    if (typeof el !== 'string' || !el) continue;                   // kararlı eleman ifadesi yoksa (olmamalı) atla
+    const parent = '(' + el + ')';
+    const results: { title: string; items: string[]; dashes: boolean[] }[] = [];
+    for (const set of sets) {
+      const acc = set.access ?? '.';                               // alt eleman -> label erişimi ("." | "->")
+      const cap = (typeof set.max === 'number' && set.max > 0) ? set.max : 64;   // bozuk sayaç -> sınırsız GDB turu olmasın
+      const arrRoot = resolvePart(String(set.array), parent, '.'); // blok elemanı -> alt dizi kökü
+      const cntExpr = resolvePart(String(set.count), parent, '.');
+      let cnt = 0;
+      try { cnt = parseInt(cleanValue(await gdbExec(session, `print ${cntExpr}`, frameId)), 10) || 0; } catch { cnt = 0; }
+      const items: string[] = [];
+      const dashes: boolean[] = [];   // items ile aynı uzunluk; dashWhen yoksa hepsi false (ekstra GDB turu yok)
+      // dashWhen çözümü (kesikli-kenar koşulu):
+      //  - true/false: GDB'nin C modu bunları BİLMEZ -> JS sabiti (GDB'siz), tüm chip'lere uygulanır.
+      //  - ${expr}'siz VE harf/altçizgiyle BAŞLAMAYAN (örn "1","0"): elemandan BAĞIMSIZ standalone ifade
+      //    -> GDB'de BİR KEZ değerlendir, tüm chip'lerde kullan (accessor sanıp "(eleman).1" göndermez).
+      //  - aksi (accessor "off" / "off == 1" / "${expr}" şablonu): HER eleman için ayrı değerlendirilir.
+      const dwRaw = set.dashWhen != null ? String(set.dashWhen).trim() : '';
+      let dwConst: boolean | null = /^(true|false)$/i.test(dwRaw) ? /^true$/i.test(dwRaw) : null;   // null = eleman başına
+      if (dwConst === null && dwRaw && dwRaw.indexOf('${expr}') === -1 && !/^[A-Za-z_]/.test(dwRaw) && cnt > 0) {
+        let dv = ''; try { dv = cleanValue(await gdbExec(session, `print (${dwRaw})`, frameId)); } catch { dv = ''; }
+        dwConst = condTrue(dv);   // "1"/"0"/(global ifade) — eleman-bağımsız, bir kez
+      }
+      for (let i = 0; i < Math.min(cnt, cap); i++) {
+        if (isStale && isStale()) return;
+        const elemExpr = `(${arrRoot})[${i}]`;
+        const readExpr = set.label ? `(${elemExpr})${acc}${set.label}` : elemExpr;   // label verilirse o alan; yoksa elemanın kendisi
+        let v = '';
+        try { v = nodeLabel(cleanValue(await gdbExec(session, `print ${readExpr}`, frameId))); } catch { v = ''; }
+        items.push(v);
+        if (dwConst !== null) dashes.push(dwConst);   // sabit / standalone -> per-element tur yok
+        else if (dwRaw) {   // accessor ya da ${expr} şablonu -> cihaz elemanına göre truthy ise kenar kesikli
+          const dwExpr = dwRaw.indexOf('${expr}') !== -1 ? dwRaw.split('${expr}').join('(' + elemExpr + ')') : `(${elemExpr})${acc}${dwRaw}`;
+          let dv = '';
+          try { dv = cleanValue(await gdbExec(session, `print ${dwExpr}`, frameId)); } catch { dv = ''; }
+          dashes.push(condTrue(dv));
+        } else dashes.push(false);
+      }
+      results.push({ title: (typeof set.title === 'string' ? set.title : ''), items, dashes });
+    }
+    (row as any)['__tlsets__'] = results;   // Row = Record<string,string> ama __tlsets__ küme-sonuç dizisi taşır (webview'e JSON olarak gider)
+  }
+}
 
 async function refresh(session: vscode.DebugSession, threadId: number, gen?: number) {
   if (!panel) return;
@@ -1281,12 +1692,20 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
   secs.forEach((s, i) => { byName[s.name] = { name: s.name, cfg: s.cfg, i }; });
   const lay = resolveLayout(secs);
   const order = lay.order, hiddenSet = lay.hiddenSet, visible = lay.visible;
+  // Bir bölüm YÜKLENİRKEN kapatılırsa: setSections mesajı sectionPrefs'i ANINDA günceller (refresh await'leri
+  // arasında event-loop işler). isHiddenNow o an gizli mi diye CANLI bakar -> o bölümün yüklemesini iptal edip sıradakine geçeriz.
+  const configHiddenNames = secs.filter(s => s.cfg.hidden).map(s => s.name);
+  const isHiddenNow = (n: string) => (sectionPrefs.touched ? (sectionPrefs.hidden || []) : configHiddenNames).includes(n);
   lastFingerprint = fingerprintOf(secs, lay);   // sonraki config değişimini "veri mi sunum mu" diye karşılaştırmak için taban
   const ts = new Date().toLocaleTimeString();
   log?.info(`refresh: ${secs.length} section(s); visible=[${visible.join(', ')}] active=${activeTab ?? '-'}`);
   perfRefreshSaved = 0;   // bu yenilemede kaydedilen round-trip'leri say (bölümler perfSectionEnd ile ekler)
 
-  // iskeleti hazırla (ts + layout + kaldırılanları temizle); bölümler aşağıda ÖNCELİKLİ akışla gelir
+  // iskeleti hazırla (ts + layout + kaldırılanları temizle); bölümler aşağıda ÖNCELİKLİ akışla gelir.
+  // beginUpdate'ten ÖNCE stale kontrolü: yukarıdaki await'ler (stackTrace / print-setup) sırasında daha yeni bir
+  // istek VEYA 'continued' (cancelRefresh) gen'i bump'lamış olabilir. Bu kontrol olmadan eski/iptal koşu paneli
+  // SKELETON'a çevirir (beginUpdate) sonra L1655'te bail eder -> endUpdate gelmez -> yarım-yükleme/flaş kalır.
+  if (stale()) return;
   panel.webview.postMessage({ type: 'beginUpdate', order, visible, hiddenSections: order.filter(n => hiddenSet.has(n)), details: detailMap, ts });
   sendWatchpoints();   // webview izlenen hücreleri ★ ile işaretlesin (yenileme sonrası da korunur)
 
@@ -1295,7 +1714,7 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
   const built = new Set<string>();
   const sendSec = (name: string, sec: Section) => { built.add(name); panel?.webview.postMessage({ type: 'patchSection', section: name, sec, ts }); };
   // AKIŞ: bir bölüm kurulurken satırlar/gruplar geldikçe kısmi tabloyu gönder (yalnız görünür + henüz son hali verilmemiş + güncel durak).
-  const streamPost = (name: string) => (sec: Section) => { if (!stale() && !built.has(name) && visible.includes(name)) panel?.webview.postMessage({ type: 'streamSection', section: name, sec, ts }); };
+  const streamPost = (name: string) => (sec: Section) => { if (!stale() && !built.has(name) && visible.includes(name) && !isHiddenNow(name)) panel?.webview.postMessage({ type: 'streamSection', section: name, sec, ts }); };
   const ensureMaster = async (mName: string): Promise<void> => {
     if (masters[mName]) return;
     const mm = byName[mName]; if (!mm) return;
@@ -1305,24 +1724,44 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
   };
 
   // ÖNCELİKLİ KUYRUK: aktif sekme önce, sonra kalanlar (config sırası). Sekme değişirse (activeTab) sıradaki öncelik değişir.
-  const remaining = () => visible.filter(n => !built.has(n));
+  const remaining = () => visible.filter(n => !built.has(n) && !isHiddenNow(n));   // yüklenirken kapatılan bölüm kuyruktan düşer
   let rem: string[];
   while ((rem = remaining()).length) {
     if (stale()) return;   // daha yeni durak/istek -> bu (eski) akışı bırak
     const next = (activeTab && rem.includes(activeTab)) ? activeTab : rem[0];
     const node = byName[next];
+    // Bu bölüme özel iptal: yeni durak (gen) VEYA bu bölüm kapatıldı. collectSection satır/grup arası kontrol eder -> orta yükte durur.
+    const secStale = () => stale() || isHiddenNow(next);
     let sec: Section;
-    if (isGrouped(node.cfg)) {
-      await ensureMaster(node.cfg.groupBy as string);
-      if (stale()) return;
-      sec = await buildGrouped(session, frameId, node.i, next, node.cfg, masters, stale, streamPost(next));
-    } else if (masters[next]) {
-      sec = masters[next].sec;   // başka bir grouped bölüm için zaten kurulmuş
-    } else {
-      sec = await buildSection(session, node.cfg, frameId, '$ri_' + node.i, next, stale, streamPost(next));
-      masters[next] = { sec, selExprs: masterSelExprs(sec, node.cfg), cfg: node.cfg };
+    // Bölüm kurulumu HATA VERSE bile refresh ölmesin: hatalı bölüm boş+hatalı gönderilir, SIRADAKİ bölümler yüklenir.
+    // (Örn bozuk bir config değeri tek bölümü etkilemeli; eskiden yakalanmayan istisna tüm akışı sessizce durduruyordu.)
+    try {
+      if (isMultiArray(node.cfg)) {
+        if (node.cfg.groupBy) log?.warn(`${node.cfg.mode} "${next}": groupBy desteklenmez, yok sayıldı`);
+        sec = await buildArrayNd(session, frameId, next, node.cfg, secStale, streamPost(next));
+      } else if (isGrouped(node.cfg)) {
+        await ensureMaster(node.cfg.groupBy as string);
+        if (stale()) return;
+        if (isHiddenNow(next)) continue;   // master kurulurken kapatıldı -> child'ı hiç kurma, sıradakine geç
+        sec = await buildGrouped(session, frameId, node.i, next, node.cfg, masters, secStale, streamPost(next));
+      } else if (masters[next]) {
+        sec = masters[next].sec;   // başka bir grouped bölüm için zaten (tam) kurulmuş
+      } else {
+        sec = await buildSection(session, node.cfg, frameId, '$ri_' + node.i, next, secStale, streamPost(next));
+        if (!isHiddenNow(next)) masters[next] = { sec, selExprs: masterSelExprs(sec, node.cfg), cfg: node.cfg };   // iptal edildiyse KISMİ sonucu master olarak saklama
+      }
+    } catch (e: any) {
+      log?.warn(`refresh: section "${next}" failed — ${e?.message ?? e}`);
+      sec = { name: next, columnsAll: [], hidden: [], rows: [], summary: '', error: `section failed: ${e?.message ?? e}` };
     }
     if (stale()) return;
+    if (isHiddenNow(next)) { log?.debug(`refresh: "${next}" yükleme sırasında kapatıldı → iptal, sıradaki bölüme geçiliyor`); continue; }   // gönderme; remaining() bu bölümü düşürür
+    // ⏱ timeline.set: blok başına ALT diziyi (device kümesi) her satırın __el__'i üstünden çek + satıra ekle
+    // (view toggle client-side -> timeline verisi de burada, son sec ile birlikte gönderilmeli)
+    if (node.cfg.timeline && node.cfg.timeline.set && !sec.error) {
+      try { await attachTimelineSet(session, frameId, sec, node.cfg, secStale); }
+      catch (e: any) { log?.warn(`refresh: "${next}" timeline.set failed — ${e?.message ?? e}`); }
+    }
     if (!built.has(next)) sendSec(next, sec);
   }
   if (stale()) return;
@@ -1334,9 +1773,11 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
 // Webview
 // ---------------------------------------------------------------------------
 function openPanel(context: vscode.ExtensionContext) {
-  if (panel) { panel.reveal(vscode.ViewColumn.Beside); return; }
+  // AKTİF editör grubunda TAM-genişlik sekme olarak aç (ViewColumn.Active) — editörü ikiye BÖLMEZ (eski
+  // ViewColumn.Beside "yarım pencere" split'i açıyordu). Mevcut panel varsa olduğu kolonda öne getir (reveal()).
+  if (panel) { panel.reveal(); return; }
   panel = vscode.window.createWebviewPanel(
-    'debugInspector', 'Debug Inspector', vscode.ViewColumn.Beside,
+    'debugInspector', 'Debug Inspector', vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true }
   );
   panel.onDidDispose(() => { panel = undefined; openDetails = []; }, null, context.subscriptions);
@@ -1347,10 +1788,13 @@ function openPanel(context: vscode.ExtensionContext) {
       if (msg?.type === 'openConfig') { log?.debug('webview: open config'); vscode.commands.executeCommand('debugInspector.openConfig'); return; }
       if (msg?.type === 'openDetail' && typeof msg.master === 'string' && typeof msg.sel === 'string' && typeof msg.section === 'string') {
         // master satırı sağ-tık -> "Show detailed info": detayı kaydet (her durakta tazelenecek) + hemen bir kez çek
-        if (!openDetails.some(d => d.master === msg.master && d.sel === msg.sel && d.section === msg.section))
-          openDetails.push({ master: msg.master, sel: msg.sel, section: msg.section });
-        log?.info(`detail open: "${msg.section}" of [${msg.sel}] (from ${msg.master})`);
-        void refreshDetail({ master: msg.master, sel: msg.sel, section: msg.section });
+        const selIndex = (typeof msg.selIndex === 'string' && msg.selIndex !== '') ? msg.selIndex : undefined;   // ${selected_index}: seçilen satırın index'i (array/index_list/nested_array'de dolu)
+        const selMasterIndex = (typeof msg.selMasterIndex === 'string' && msg.selMasterIndex !== '') ? msg.selMasterIndex : undefined;   // ${selected_master_index}: satırın parent index'i (grouped/nested_array)
+        const selOuterIndex = (typeof msg.selOuterIndex === 'string' && msg.selOuterIndex !== '') ? msg.selOuterIndex : undefined;   // ${selected_outer_index}: DIŞ index (yalnız nested_array >=3 seviye)
+        const ex = openDetails.find(d => d.master === msg.master && d.sel === msg.sel && d.section === msg.section);
+        if (ex) { ex.selIndex = selIndex; ex.selMasterIndex = selMasterIndex; ex.selOuterIndex = selOuterIndex; } else openDetails.push({ master: msg.master, sel: msg.sel, section: msg.section, selIndex, selMasterIndex, selOuterIndex });
+        log?.info(`detail open: "${msg.section}" of [${msg.sel}] (from ${msg.master}, idx=${selIndex ?? '-'}, midx=${selMasterIndex ?? '-'}, oidx=${selOuterIndex ?? '-'})`);
+        void refreshDetail({ master: msg.master, sel: msg.sel, section: msg.section, selIndex, selMasterIndex, selOuterIndex });
         return;
       }
       if (msg?.type === 'closeDetail' && typeof msg.master === 'string' && typeof msg.sel === 'string' && typeof msg.section === 'string') {
@@ -1379,6 +1823,42 @@ function openPanel(context: vscode.ExtensionContext) {
       } else if (msg?.type === 'copy' && typeof msg.text === 'string') {
         vscode.env.clipboard.writeText(msg.text);
         log?.debug(`webview: copied ${msg.text.length} chars to clipboard`);
+      } else if (msg?.type === 'openSource' && typeof msg.loc === 'string' && msg.loc) {
+        // sourceLine hücresine tıklandı: "yol:satır" -> DOĞRU dosyayı editörde aç + o satıra git.
+        // msg.loc, GDB'nin verdiği yolu taşır (relative/abs/basename) -> aynı adlı dosyaları ayırt eder.
+        const mm = msg.loc.match(/^(.*):(\d+)$/);   // satır = SON iki nokta üstünden (Windows "C:\...\f.c:12" da doğru)
+        if (!mm) { log?.warn(`openSource: unparseable loc "${msg.loc}"`); return; }
+        const line = Math.max(0, parseInt(mm[2], 10) - 1);   // GDB 1-tabanlı -> VS Code 0-tabanlı
+        const ref = mm[1];
+        // GEÇ AÇILMA FIX'i: pahalı yol workspace-genişliğinde findFiles taramasıdır. Sırayla:
+        //   0) cache (tekrar tıklama anında)  1) mutlak yol  2) HIZLI yerel stat (her kök × her sonek, tarama YOK)
+        //   3) SON ÇARE tek findFiles(basename) + en iyi sonek eşleşmesi. Çoğu tık 0/2'de biter -> anında.
+        let fsPath = sourceUriCache.get(ref);
+        if (fsPath && !fs.existsSync(fsPath)) fsPath = undefined;   // dosya taşınmış/silinmiş -> yeniden çöz
+        if (!fsPath) {
+          const cand = sourceRefCandidates(ref);
+          const folders = (vscode.workspace.workspaceFolders || []).map(w => w.uri.fsPath);
+          const suffixes = cand.globs.map(g => g.replace(/^\*\*\//, ''));   // uzun..kısa (basename dahil)
+          // 1) mutlak yol (cygwin -> windows'a çevrilmiş) + mevcutsa
+          if (cand.abs && fs.existsSync(cand.abs)) fsPath = cand.abs;
+          // 2) HIZLI: her workspace kökü altında her soneki yerel fs.existsSync ile dene (index taraması YOK -> anında)
+          if (!fsPath) for (const folder of folders) {
+            for (const suf of suffixes) { const p = path.join(folder, suf); if (fs.existsSync(p)) { fsPath = p; break; } }
+            if (fsPath) break;
+          }
+          // 3) SON ÇARE (dosya kökün doğrudan altında değil): TEK findFiles(basename) + en uzun sonek eşleşmesini seç
+          if (!fsPath) {
+            const hits = await vscode.workspace.findFiles('**/' + cand.base, '**/node_modules/**', 100);
+            const best = bestSuffixMatch(ref, hits.map(h => h.fsPath));
+            if (best) fsPath = best;
+          }
+          if (fsPath) sourceUriCache.set(ref, fsPath);
+        }
+        if (!fsPath) { vscode.window.showWarningMessage(`Debug Inspector: source file not found — ${ref}`); return; }
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fsPath));
+        const pos = new vscode.Position(line, 0);
+        await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos), preview: true });
+        log?.info(`openSource: ${msg.loc} → ${fsPath}:${line + 1}`);
       } else if (msg?.type === 'watchpoint' && typeof msg.expr === 'string' && msg.expr) {
         // GDB veri-watchpoint'i: değer değişince program durur (bellek YAZMAZ; sadece break davranışı). Opt-in (sağ-tık).
         if (!lastStopped) { vscode.window.showWarningMessage('Debug Inspector: debugger not stopped — cannot set a watchpoint.'); return; }
@@ -1430,8 +1910,24 @@ function openPanel(context: vscode.ExtensionContext) {
         };
         log?.debug(`webview: setSections order=[${sectionPrefs.order.join(', ')}] hidden=[${sectionPrefs.hidden.join(', ')}] reveal=${msg.reveal || '-'}`);
         extContext?.workspaceState.update(SECPREF_KEY, sectionPrefs);
-        // reorder/hide tamamen istemci-tarafı (GDB yok); SADECE gösterilen bölümü çek (tüm paneli değil)
-        if (msg.reveal) refreshTarget(msg.reveal);
+        // reorder/hide tamamen istemci-tarafı (GDB yok); SADECE gösterilen bölüm(ler)i çek (tüm paneli değil).
+        // reveal TEK ad YA DA DİZİ olabilir ("Show all": tüm yeni görünenler) -> sırayla refreshTarget (gdb mutex serileştirir).
+        // Döngü canlı duruma saygılı olmalı (refresh()'in isHiddenNow/gen korumalarının karşılığı):
+        //  - gen değişti (yeni durak/continued/config) -> kalanları BIRAK (tam refresh zaten kuracak / koşan programdan okunmaz)
+        //  - öğe bu arada yeniden GİZLENDİ (Show all -> hemen Hide all) -> atla ("gizli asla çekilmez" invariantı)
+        //  - bir öğe patlarsa kalanlar yüklensin (refresh()'in per-section try/catch'inin karşılığı) + pane'e açık hata
+        const rv = Array.isArray(msg.reveal) ? msg.reveal : (msg.reveal ? [msg.reveal] : []);
+        const revealGen = refreshGen;
+        for (const r of rv) {
+          if (typeof r !== 'string' || !r) continue;
+          if (revealGen !== refreshGen) { log?.debug('reveal: cancelled (new stop/continue/config)'); break; }
+          if ((sectionPrefs.hidden || []).includes(r)) { log?.debug(`reveal: "${r}" re-hidden mid-loop → skipped`); continue; }
+          try { await refreshTarget(r); }
+          catch (e: any) {
+            log?.warn(`reveal: section "${r}" failed — ${e?.message ?? e}`);
+            panel?.webview.postMessage({ type: 'patchSection', section: r, sec: { name: r, columnsAll: [], hidden: [], rows: [], summary: '', error: `section failed: ${e?.message ?? e}` }, ts: new Date().toLocaleTimeString() });
+          }
+        }
       } else if (msg?.type === 'editValue' && typeof msg.expr === 'string' && msg.expr) {
         // sağ-tık 'Edit value' -> GDB 'set var' ile debuggee'ye YAZ (yalnız editable alanlar)
         if (!lastStopped) { vscode.window.showWarningMessage('Debug Inspector: debugger not stopped — cannot edit.'); return; }
@@ -1533,6 +2029,9 @@ function getHtml(): string {
   .cols-grip { opacity: 0.45; font-size: 12px; cursor: grab; user-select: none; }
   .cm-item { padding: 6px 12px; cursor: pointer; border-radius: 5px; white-space: nowrap; font-size: 12px; }
   .cm-item:hover { background: var(--vscode-list-hoverBackground); }
+  /* Sections/Columns menüsü toplu aksiyonları: Show all / Hide all (iki menüde ORTAK görünüm) */
+  .cols-actions { display: flex; gap: 4px; padding: 2px 4px 6px; border-bottom: 1px solid var(--vscode-widget-border, #333); margin-bottom: 4px; }
+  .cols-actions .cm-item { flex: 1; text-align: center; border: 1px solid var(--vscode-widget-border, #3a3a3a); padding: 3px 8px; }
   .cols-item label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12.5px; }
   .cols-move button {
     appearance: none; cursor: pointer; border: none; background: transparent;
@@ -1652,6 +2151,54 @@ function getHtml(): string {
   /* çapraz-referans link + hedef satır vurgusu */
   .xref { color: var(--vscode-textLink-foreground, #3b9eff); cursor: pointer; text-decoration: none; }
   .xref:hover { text-decoration: underline; }
+  .srcref { color: var(--vscode-textLink-foreground, #3b9eff); cursor: pointer; text-decoration: none; }
+  .srcref:hover { text-decoration: underline; }
+  /* ⏱ timeline (round-robin / konumlu) görünümü — dataviz kuralları: çekinik eksen+grid, mürekkep etiket, legend */
+  .tl-wrap { padding: 10px 12px 14px; overflow-x: auto; }
+  .tl-lane { display: flex; align-items: stretch; padding: 2px 0; border-radius: 4px; }
+  .tl-lane.tl-alt { background: rgba(255,255,255,0.02); }
+  .tl-lname { flex: 0 0 130px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; color: #9da7b3; padding: 7px 10px 0 0; text-align: right; position: sticky; left: 0; z-index: 2; background: var(--vscode-editor-background, #161b22); }
+  .tl-track { flex: 1 1 auto; display: flex; gap: 2px; min-height: 28px; border-left: 1px solid #2b3138; padding-left: 4px; }
+  .tl-blk { display: flex; align-items: center; justify-content: center; min-width: 26px; border: 1px solid; border-radius: 3px; padding: 2px 6px; overflow: hidden; cursor: pointer; }
+  .tl-blk:hover { filter: brightness(1.35); }
+  .tl-blk > span { font-size: 11px; color: var(--vscode-foreground, #ccc); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tl-track.tl-pos { display: block; position: relative; height: 28px; overflow: hidden; }
+  .tl-blk.tl-abs { position: absolute; top: 3px; bottom: 3px; min-width: 8px; box-sizing: border-box; }
+  /* ⏱ timeline.set: bloklar alt-dizi (device kümesi) chip'i taşıyınca lane/blok yükselir + dikey düzen */
+  .tl-track.tl-hasset { min-height: 56px; }
+  .tl-track.tl-pos.tl-hasset { height: 56px; }
+  .tl-blk.tl-hasset { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 2px; padding: 3px 5px; }
+  .tl-blk.tl-hasset > .tl-lbl { flex: 0 0 auto; }
+  .tl-setrow { display: flex; align-items: flex-start; gap: 4px; flex: 1 1 0; min-height: 0; overflow: hidden; }   /* bir küme (device/signal) satırı; birden çok küme dikey paylaşır */
+  .tl-scap { flex: 0 0 auto; font-size: 9.5px; line-height: 1.5; color: #8b949e; white-space: nowrap; }   /* küme başlığı (title verilmişse; chip'lerin solunda, dev/sig) */
+  .tl-set { display: flex; flex-wrap: wrap; gap: 3px; overflow: hidden; align-content: flex-start; min-height: 0; flex: 1 1 auto; }
+  .tl-chip { font-size: 9.5px; line-height: 1.45; border: 1px solid; border-radius: 3px; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; box-sizing: border-box; }
+  .tl-chip.tl-more { color: #9da7b3; border-color: rgba(139,148,158,0.4); background: transparent !important; font-variant-numeric: tabular-nums; }   /* taşan device sayısı rozeti (+N) */
+  .tl-chip.tl-chip-dash { border-style: dashed; }   /* set.dashWhen: koşul doğruysa cihaz chip'inin kenarı kesikli */
+  .tl-grid { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed rgba(139,148,158,0.16); pointer-events: none; }
+  .tl-lane.tl-axis { margin-bottom: 2px; }
+  .tl-axistrack { border-left: none !important; border-bottom: 1px solid #2b3138; height: 16px !important; min-height: 16px; overflow: visible !important; }
+  .tl-tick { position: absolute; bottom: 2px; font-size: 10px; color: #7d8590; font-variant-numeric: tabular-nums; }
+  /* ⏱ timeline: blok tıklama -> detay kartı (graph gv-detail deseni), seçili blok, legend başlığı, total etiketi */
+  .tl-blk.tl-sel { box-shadow: inset 0 0 0 2px var(--vscode-focusBorder, #58a6ff); z-index: 3; }
+  .tl-detail { margin: 8px 0 4px 140px; max-width: min(460px, calc(100% - 152px)); background: var(--vscode-editor-background, #161b22); border: 1px solid #2b3138; border-radius: 6px; padding: 9px 11px; position: relative; }
+  .tl-detail h4 { margin: 0 0 7px; font-size: 13px; font-weight: 500; padding-right: 14px; word-break: break-all; color: var(--vscode-foreground, #e6edf3); }
+  .tl-detail .grow2 { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 2px 0; color: var(--vscode-descriptionForeground, #8a8a8a); font-size: 12px; }
+  .tl-detail .grow2 b { color: var(--vscode-foreground, #e6edf3); font-weight: 500; text-align: right; display: inline-flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; align-items: center; overflow-wrap: anywhere; }
+  .tl-dclose { position: absolute; top: 6px; right: 9px; cursor: pointer; opacity: 0.6; }
+  .tl-dclose:hover { opacity: 1; }
+  .tl-tcap { font-size: 11px; color: #9da7b3; margin: 2px 0 3px 140px; font-variant-numeric: tabular-nums; }
+  .tl-lgcap { font-size: 11px; color: #c9d1d9; font-weight: 600; margin-right: 2px; }
+  .tl-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 0 140px; align-items: center; }
+  .tl-lgitem { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: #9da7b3; }
+  .tl-lgsw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .tl-lgmore { color: #7d8590; }
+  .tl-chart { display: inline-block; vertical-align: top; min-width: 260px; box-sizing: border-box; padding: 4px 12px 8px 0; }
+  .tl-ctitle { font-size: 12px; font-weight: 600; color: #c9d1d9; margin: 2px 0 4px 140px; }
+  .tl-ctot { color: #7d8590; font-weight: 400; }
+  .tl-zoomgrp { display: inline-flex; align-items: center; gap: 2px; }
+  .tl-zoomlbl { font-size: 11px; color: #8b949e; min-width: 26px; text-align: center; font-variant-numeric: tabular-nums; }
+  .tl-hint { font-size: 11px; color: #8b949e; align-self: center; }
   @keyframes rowflash { from { background: rgba(59,158,255,0.55); } to { background: transparent; } }
   tbody tr.rowflash td { animation: rowflash 1.6s ease-out; }
 
@@ -1917,6 +2464,7 @@ function getHtml(): string {
       return;
     }
     const st = secState[targetSec];
+    if (st && st.sec && st.view === 'timeline') { st.view = 'table'; paint(targetSec); }   // timeline'da satır vurgusu yok -> tabloya geç
     if (st && st.sec) {
       const vis = st.order.filter(l => st.hidden.indexOf(l) === -1);
       if (!matchCol) matchCol = vis[0];
@@ -2140,13 +2688,36 @@ function getHtml(): string {
   // --- araç çubuğu (filtre / changed-only / kopya); sayı tabanı artık per-kolon (▦ Columns) ---
   function toolbarHtml(st) {
     let h = '<div class="tbl-bar">';
+    if (st.view === 'timeline') {
+      const t = st.sec.timeline || {};
+      h += '<span class="tl-hint" title="timeline config: lane/start/width/total/order/label/color">⏱ ' + esc(t.lane ? ('lane: ' + t.lane) : (st.sec.grouped ? 'lane: group' : 'single lane')) + (t.start ? (' · start: ' + esc(t.start)) : (t.order ? (' · order: ' + esc(t.order)) : '')) + (t.width ? (' · width: ' + esc(t.width)) : '') + (t.chart ? (' · chart: ' + esc(t.chart)) : '') + (t.total != null ? (' · total: ' + esc(String(t.total)) + (t.unit ? (' ' + esc(String(t.unit))) : '')) : '') + '</span>';
+      // Çoklu grafik (t.chart) varsa ÖLÇEK toggle'ı: proportional (gerçek uzunluk oranı) <-> normalize (her grafik tam genişlik).
+      // Bazı grafikler orantılı modda çok küçük kaldığında normalize okunur kılar. Varsayılan config'teki t.scale; kullanıcı anlık çevirir.
+      if (t.chart) {
+        const fit = st.tlFit != null ? st.tlFit : (t.scale === 'fit');
+        h += '<button class="btn tl-fit-toggle' + (fit ? ' on' : '') + '" title="' + (fit ? 'Normalized: every chart uses the full width. Click for proportional (width scaled to total).' : 'Proportional: each chart width scaled to its total. Click to normalize (every chart full width).') + '">' + (fit ? '◱ Normalized' : '⤢ Normalize') + '</button>';
+      }
+      if (t.start) {   // YATAY ZOOM (konumlu mod): pane'e sigdirmak yerine genislet -> kucuk bloklar okunur, yatay scroll
+        const z = (st.tlZoom && st.tlZoom > 1) ? st.tlZoom : 1;
+        h += '<span class="tl-zoomgrp"><button class="btn tl-zoom-out" title="Zoom out (narrower)"' + (z <= 1 ? ' disabled' : '') + '>−</button>';
+        h += '<span class="tl-zoomlbl" title="Horizontal zoom (fit-to-width at 1×)">' + (z > 1 ? (z + '×') : 'Fit') + '</span>';
+        h += '<button class="btn tl-zoom-in" title="Zoom in (wider — small blocks readable)">+</button></span>';
+      }
+      h += '<span class="grow"></span>';
+      h += '<button class="btn view-toggle" data-view="table" title="Switch back to the table view">▤ Table</button>';
+      h += '<button class="btn view-toggle" data-view="graph" title="Show this section as a node graph">◉ Graph</button>';
+      h += '<button class="btn cols-btn" title="Show / hide / reorder columns (label/tooltip fields)">▦ Columns</button>';
+      h += '</div>';
+      return h;
+    }
     if (st.view === 'graph') {
       h += '<button class="btn graph-fit" title="Fit the graph to the view">⤢ Fit</button>';
       if (sectionHasLinks(st.sec)) h += '<button class="btn links-toggle' + ((st.gv && st.gv.links) ? ' on' : '') + '" title="Show cross-section relationship links (purple) — outgoing and incoming">⇄ Links</button>';
       h += '<input class="gv-search" type="text" placeholder="Find — text or field>=3" value="' + esc((st.gv && st.gv.q) || '') + '" title="Find nodes by text, or a field test like count>=3 / state=running (operators > >= < <= = !=). Enter / Shift+Enter to cycle, Esc to clear">';
       h += '<span class="gv-srch-n"></span>';
       h += '<span class="grow"></span>';
-      h += '<button class="btn view-toggle" title="Switch back to the table view">▤ Table</button>';   // tablo/graph toggle her iki görünümde de SAĞDA
+      h += '<button class="btn view-toggle" data-view="table" title="Switch back to the table view">▤ Table</button>';   // görünüm butonları her görünümde SAĞDA
+      if (st.sec.timeline) h += '<button class="btn view-toggle" data-view="timeline" title="Show this section as a round-robin timeline">⏱ Timeline</button>';
       h += '<button class="btn map-toggle' + ((st.gv && st.gv.mini) ? ' on' : '') + '" title="Show / hide the minimap">◉ Map</button>';
       h += '<button class="btn cols-btn" title="Show / hide / reorder the fields shown on cards">▦ Fields</button>';
       h += '</div>';
@@ -2163,7 +2734,8 @@ function getHtml(): string {
     }
     else if (st.changeCount > 0) h += '<button class="btn chg-only' + (st.changedOnly ? ' on' : '') + '" title="Show only changed rows">Δ Changed</button>';
     h += '<span class="grow"></span>';
-    h += '<button class="btn view-toggle" title="Show this section as a node graph">◉ Graph</button>';
+    h += '<button class="btn view-toggle" data-view="graph" title="Show this section as a node graph">◉ Graph</button>';
+    if (st.sec.timeline) h += '<button class="btn view-toggle" data-view="timeline" title="Show this section as a round-robin timeline (lanes/order/label from the timeline config)">⏱ Timeline</button>';   // yalnız config'te "timeline" tanımlı bölümlerde
     h += '<button class="btn cols-btn" title="Show / hide / reorder columns">▦ Columns</button>';
     h += '<button class="btn copy-csv" title="Copy table as CSV">⧉ CSV</button>';
     h += '<button class="btn copy-md" title="Copy table as Markdown">⧉ MD</button>';
@@ -2287,9 +2859,10 @@ function getHtml(): string {
     const badges = opts.badges || {};
     const valueMap = opts.valueMap || {};
     const flags = opts.flags || {};
+    const srcCols = opts.srcCols || [];   // sourceLine kolonları: "dosya:satır" hücreleri tıklanabilir (kaynağa git)
     const sortCol = opts.sortCol;
     const rk = rowKeyOf(row, columns);
-    let h = '<tr' + (ri != null ? ' data-ri="' + ri + '"' : '') + (row['__el__'] ? ' data-el="' + esc(row['__el__']) + '"' : '') + '>';   // data-ri=kaynak satır; data-el=watch ifadesi (kararlı eleman)
+    let h = '<tr' + (ri != null ? ' data-ri="' + ri + '"' : '') + (row['__el__'] ? ' data-el="' + esc(row['__el__']) + '"' : '') + (row['__idx__'] != null ? ' data-idx="' + esc(row['__idx__']) + '"' : '') + (row['__midx__'] != null ? ' data-midx="' + esc(row['__midx__']) + '"' : '') + (row['__oidx__'] != null ? ' data-oidx="' + esc(row['__oidx__']) + '"' : '') + '>';   // data-ri=kaynak satır; data-el=watch ifadesi; data-idx=subscript (\${selected_index}); data-midx=grubun master index'i (\${selected_master_index})
     for (const c of columns) {
       const ck = rk + '\\u0000' + c;
       const isChg = changed && Object.prototype.hasOwnProperty.call(changed, ck);
@@ -2315,6 +2888,10 @@ function getHtml(): string {
       const flagH = (!isDash(raw) && flags[c]) ? flagsHtml(flags[c], raw) : null;   // bayrak alanı: set bitleri çöz (vmap/badge'den önce)
       if (lk && raw !== '' && !isDash(raw) && linkHasTarget(lk, raw)) {
         inner = '<a class="xref" data-sec="' + esc(lk.section) + '" data-match="' + esc(lk.match || '') + '" data-val="' + esc(raw) + '">' + esc(vmap ? vmap.text : disp) + '</a>';
+      } else if (srcCols.indexOf(c) !== -1 && raw !== '' && !isDash(raw)) {
+        // tıklama hedefi: GDB'nin tam/relative yolu (__src__) varsa onu kullan (doğru dosya), yoksa gösterilen değer
+        const loc = (row['__src__' + c] != null && row['__src__' + c] !== '') ? row['__src__' + c] : raw;
+        inner = '<a class="srcref" data-loc="' + esc(loc) + '" title="Open ' + esc(loc) + ' in the editor">' + esc(disp) + '</a>';
       } else if (flagH) {
         inner = flagH;
       } else if (vmap) {
@@ -2714,7 +3291,7 @@ function getHtml(): string {
     var row = n.row, cols = n.cols, color = nodeColor(row, cols, badges, valueMap);
     var tvm = cols.length ? valueMapEntry(valueMap[cols[0]], row[cols[0]], shortVal(row[cols[0]])) : null;
     var title = cols.length ? (tvm ? tvm.text : shortVal(row[cols[0]])) : '';
-    var elAttr = row['__el__'] ? ' data-el="' + esc(row['__el__']) + '"' : '';   // #1: sağ tık -> watch ifadesi kopyala
+    var elAttr = (row['__el__'] ? ' data-el="' + esc(row['__el__']) + '"' : '') + (row['__idx__'] != null ? ' data-idx="' + esc(row['__idx__']) + '"' : '') + (row['__midx__'] != null ? ' data-midx="' + esc(row['__midx__']) + '"' : '') + (row['__oidx__'] != null ? ' data-oidx="' + esc(row['__oidx__']) + '"' : '');   // #1: sağ tık -> watch kopyala; data-idx -> \${selected_index}; data-midx -> \${selected_master_index}
     var s = '<g class="gnode" data-id="' + esc(n.id) + '" data-search="' + esc(n._s || '') + '"' + elAttr + ' transform="translate(' + n.x + ',' + n.y + ')">';
     s += '<rect class="card" width="' + n.w + '" height="' + n.h + '" rx="8"></rect>';
     if (color) s += '<rect x="0" y="0" width="4" height="' + n.h + '" rx="2" fill="' + color + '"></rect>';
@@ -3032,15 +3609,19 @@ function getHtml(): string {
   // --- Talep-üzerine detay (selectedFrom + \${selected}) yerleşimi ---
   function paneOf(name) { const i = currentNames.indexOf(name); return i < 0 ? null : panesEl.querySelector('.pane[data-idx="' + i + '"]'); }
   function detCount(sec) { if (!sec) return ''; return sec.grouped ? (sec.groups || []).reduce(function (a, g) { return a + (g.rows || []).length; }, 0) : (sec.rows || []).length; }
-  // detay bölümünü mini bir tablo olarak çiz (master sütun tercihleri/sıralama YOK; kendi base/valueMap/flags'i uygulanır)
+  // detay bölümünü mini bir tablo olarak çiz (master sütun tercihleri/sıralama YOK; kendi base/valueMap/flags/link'i uygulanır)
   function detSubTable(sec) {
     if (!sec) return '<div class="det-load">Loading…</div>';
+    if (sec.error) return '<div class="det-empty">⚠ ' + esc(sec.error) + '</div>';   // örn \${selected_index} array/index_list olmayan master'da
     const cols = (sec.columnsAll || []).filter(function (l) { return (sec.hidden || []).indexOf(l) === -1; });
     const rows = sec.grouped ? (sec.groups || []).reduce(function (a, g) { return a.concat(g.rows || []); }, []) : (sec.rows || []);
     if (!rows.length) return '<div class="det-empty">(no rows)</div>';
     const colBase = {};
     if (sec.bases) for (const k in sec.bases) colBase[k] = sec.bases[k];   // config sayı tabanını (örn PC/FP hex) uygula
-    const opts = { numCols: numericCols(cols, rows), colBase: colBase, bars: sec.bars || {}, links: {}, badges: sec.badges || {}, valueMap: sec.valueMap || {}, flags: sec.flags || {}, sortCol: null };
+    // links: detay alanlarında da çapraz-referans (field.link) uygulanır — sec.links buildSection/buildArrayNd'den gelir
+    // (fieldLinks). xref tıklaması panesEl'e delege (detay accordion'u master pane'in İÇİNDE) + linkHasTarget global
+    // secState'e bakar, yani kaynak detay olsa da hedef bölüme gider. (Eskiden burada links:{} idi -> gözden kaçmıştı.)
+    const opts = { numCols: numericCols(cols, rows), colBase: colBase, bars: sec.bars || {}, links: sec.links || {}, badges: sec.badges || {}, valueMap: sec.valueMap || {}, flags: sec.flags || {}, srcCols: sec.srcCols || [], sortCol: null };
     return buildTable(cols, rows, null, 'asc', null, opts);
   }
   function detInner(d) {
@@ -3088,12 +3669,15 @@ function getHtml(): string {
   }
   function placeDetail(d) { const st = secState[d.master]; if (!st) return; if (st.view === 'graph') placeDetailGraph(d); else placeDetailTable(d); }
   // sağ-tık menüsü: bu master'dan (sel = seçilen satır) açılabilen detaylar için Show/Hide öğeleri
-  function detMenu(master, sel) {
+  function detMenu(master, sel, idx, midx, oidx) {
     const list = detailDefs[master]; if (!list || !list.length || !sel) return '';
+    const idxAttr = ((idx != null && idx !== '') ? ' data-idx="' + esc(idx) + '"' : '')   // \${selected_index} için seçilen satırın index'i
+      + ((midx != null && midx !== '') ? ' data-midx="' + esc(midx) + '"' : '')
+      + ((oidx != null && oidx !== '') ? ' data-oidx="' + esc(oidx) + '"' : '');          // \${selected_master_index} için grubun master index'i
     let h = '';
     for (let i = 0; i < list.length; i++) {
       const dn = list[i]; const open = !!findDet(master, sel, dn);
-      h += '<div class="cm-item ' + (open ? 'det-hide' : 'det-show') + '" data-section="' + esc(master) + '" data-detail="' + esc(dn) + '" data-el="' + esc(sel) + '">' + (open ? 'Hide ' : 'Show ') + esc(cap(dn)) + ' (detail)</div>';
+      h += '<div class="cm-item ' + (open ? 'det-hide' : 'det-show') + '" data-section="' + esc(master) + '" data-detail="' + esc(dn) + '" data-el="' + esc(sel) + '"' + idxAttr + '>' + (open ? 'Hide ' : 'Show ') + esc(cap(dn)) + ' (detail)</div>';
     }
     return h;
   }
@@ -3132,20 +3716,255 @@ function getHtml(): string {
     const grouped = !!sec.grouped;
     const allRows = grouped ? (sec.groups || []).reduce(function (a, g) { return a.concat(g.rows || []); }, []) : (sec.rows || []);
     const n = allRows.length;
-    if (st && st.view === 'graph') { const c0 = cntElOf(name); if (c0) c0.textContent = n + '…'; return; }   // graph: yalnız son halde çizilir
+    if (st && (st.view === 'graph' || st.view === 'timeline')) { const c0 = cntElOf(name); if (c0) c0.textContent = n + '…'; return; }   // graph/timeline: yalnız son halde çizilir
     const order = Array.isArray(sec.columnsAll) ? sec.columnsAll : [];
     const hidden = Array.isArray(sec.hidden) ? sec.hidden : [];
     const cols = order.filter(function (l) { return hidden.indexOf(l) === -1; });
     const numCols = numericCols(cols, allRows);
     const sortCol = st ? st.sortCol : null, sortDir = (st && st.sortDir) ? st.sortDir : 'asc';
     const colBase = (st && st.colBase) ? st.colBase : {};
-    const opts = { numCols: numCols, colBase: colBase, bars: sec.bars || {}, links: sec.links || {}, badges: sec.badges || {}, valueMap: sec.valueMap || {}, flags: sec.flags || {}, sortCol: sortCol };
+    const opts = { numCols: numCols, colBase: colBase, bars: sec.bars || {}, links: sec.links || {}, badges: sec.badges || {}, valueMap: sec.valueMap || {}, flags: sec.flags || {}, srcCols: sec.srcCols || [], sortCol: sortCol };
     const banner = '<div class="summary loading">Loading… ' + n + ' row' + (n === 1 ? '' : 's') + '</div>';
     let table;
     if (grouped && !(st && st.flat)) table = buildGroupedTable(cols, sec.groups || [], (st && st.collapsed) || [], sortCol, sortDir, opts);
     else table = buildTable(cols, allRows, sortCol, sortDir, null, opts);
     body.innerHTML = banner + table;
     const cnt = cntElOf(name); if (cnt) cnt.textContent = n + '…';
+  }
+  // --- Timeline (round-robin) gorunumu ---
+  // Satirlar SERITLERE (lane) ayrilir, her satir bir BLOK olur. Config (bolumde "timeline": {...}):
+  //   lane  = seridi belirleyen KOLON (yoksa: gruplu bolumde grup basligi, duz bolumde tek serit)
+  //   order = lane ici SIRALAMA kolonu (sayisal; yoksa satir sirasi = round-robin dilim sirasi)
+  //   label = blok ustundeki metin kolonu (yoksa ilk gorunur kolon)
+  //   color = renk anahtari kolonu (badge/valueMap rengi varsa o; yoksa degerden kategorik renk)
+  //   width = blok genisligi kolonu (degerle ORANTILI, orn dilim suresi; yoksa esit genislik)
+  // Model saf fonksiyondur (buildTimelineModel) — release-gate testi verbatim kopyayla dogrular.
+  // Timeline modeli: satırları ŞERİTLERE (lane) böler. rowsOverride verilirse (çoklu-grafik: bir grafiğin
+  // alt-kümesi) o {row,ri,glabel} listesi kullanılır; yoksa sec (grouped/flat) taranır. Saf fonksiyon (test).
+  function buildTimelineModel(sec, tcfg, rowsOverride) {
+    tcfg = tcfg || {};
+    const lanes = []; const laneIx = Object.create(null);   // düz {} DEĞİL: lane değeri 'constructor'/'__proto__' olabilir
+    const push = (laneKey, row, ri) => {
+      let li = laneIx[laneKey];
+      if (li == null) { li = lanes.length; laneIx[laneKey] = li; lanes.push({ key: laneKey, blocks: [] }); }
+      lanes[li].blocks.push({ row: row, ri: ri, w: 1 });
+    };
+    const laneOf = (row, fb) => (tcfg.lane != null && row[tcfg.lane] != null && row[tcfg.lane] !== '') ? String(row[tcfg.lane]) : fb;
+    if (rowsOverride) {
+      for (const e of rowsOverride) push(laneOf(e.row, e.glabel || ''), e.row, e.ri);
+    } else if (sec.grouped) {
+      let base = 0;
+      (sec.groups || []).forEach(function (g) { (g.rows || []).forEach(function (r, j) { push(laneOf(r, g.label), r, base + j); }); base += (g.rows || []).length; });
+    } else {
+      (sec.rows || []).forEach(function (r, ri) { push(laneOf(r, ''), r, ri); });
+    }
+    if (tcfg.start) {
+      // KONUMLU mod: her blok 's' (baslangic degeri) tasir; lane ici sira konumdan gelir (order yok sayilir)
+      for (const ln of lanes) { for (const b of ln.blocks) { const sv = toIntVal(b.row[tcfg.start]); b.s = (sv != null && sv >= 0) ? sv : 0; } ln.blocks.sort(function (a, b2) { return a.s - b2.s; }); }
+    } else if (tcfg.order) for (const ln of lanes) ln.blocks.sort(function (a, b) { return (toIntVal(a.row[tcfg.order]) || 0) - (toIntVal(b.row[tcfg.order]) || 0); });
+    if (tcfg.width) for (const ln of lanes) for (const b of ln.blocks) { const w = toIntVal(b.row[tcfg.width]); b.w = (w != null && w > 0) ? w : 1; }
+    return lanes;
+  }
+  // Bölümün tüm satırlarını (grouped/flat) düz {row, ri, glabel} listesine indir (çoklu-grafik bölme için).
+  function tlFlat(sec) {
+    const out = [];
+    if (sec.grouped) { let base = 0; (sec.groups || []).forEach(function (g) { (g.rows || []).forEach(function (r, j) { out.push({ row: r, ri: base + j, glabel: g.label }); }); base += (g.rows || []).length; }); }
+    else (sec.rows || []).forEach(function (r, ri) { out.push({ row: r, ri: ri, glabel: '' }); });
+    return out;
+  }
+  // kategorik renk: degerden deterministik palet secimi (badge/valueMap rengi yoksa)
+  const TL_PALETTE = ['#3987e5', '#199e70', '#c98500', '#008300', '#9085e9', '#e66767', '#d55181', '#d95926'];   // dataviz-dogrulanmis dark kategorik (lightness/chroma/kontrast PASS; CVD taban bandi -> ikincil kodlama: etiket+legend+bosluk)
+  function tlColor(v) { let h = 0; v = String(v); for (let i = 0; i < v.length; i++) h = (h * 31 + v.charCodeAt(i)) >>> 0; return TL_PALETTE[h % TL_PALETTE.length]; }
+  function buildTimeline(st) {
+    const sec = st.sec;
+    const t = sec.timeline || {};
+    // ⏱ timeline.set: bloklar alt-dizi (device kümesi) chip'i taşır -> lane/blok daha yüksek + dikey düzen.
+    // set TEK nesne YA DA DİZİ olabilir; küme SAYISI blok yüksekliğini belirler (her küme kendi chip satırı).
+    const setDefs = t && t.set ? (Array.isArray(t.set) ? t.set : [t.set]) : [];
+    const nSets = setDefs.length;
+    const hasSet = nSets > 0;
+    const trackH = 32 + nSets * 24;   // etiket + her küme satırı (~24px); tek küme -> 56 (eski görünüm), 2 küme -> 80 ...
+    const cols = displayCols(st);
+    if (!cols.length) return '<div class="empty">No visible columns.</div>';
+    const labelCol = (t.label && cols.indexOf(t.label) !== -1) ? t.label : cols[0];
+    const colorCol = t.color || labelCol;
+    const flat = tlFlat(sec);
+    if (!flat.length) return '<div class="empty">List is empty (root is NULL or count is 0).</div>';
+    // config'in istedigi kolon gizliyse verisi HIC cekilmemistir -> acik uyari (sayi olan 'total' haric)
+    const missing = ['lane', 'order', 'label', 'color', 'width', 'start', 'chart', 'total'].map(function (k) { return t[k]; })
+      .filter(function (c) { return c && typeof c === 'string' && !/^\\d+$/.test(c) && cols.indexOf(c) === -1; });
+    // CHART: t.chart kolonu verilirse her farkli deger AYRI bir grafik (kendi ekseni + kendi total'i). Yoksa TEK grafik.
+    const chartCol = (t.chart && cols.indexOf(t.chart) !== -1) ? t.chart : null;
+    const charts = [];
+    if (chartCol) {
+      const ix = Object.create(null);
+      for (const e of flat) { const k = e.row[chartCol] != null ? String(e.row[chartCol]) : ''; let ci = ix[k]; if (ci == null) { ci = charts.length; ix[k] = ci; charts.push({ title: k, entries: [] }); } charts[ci].entries.push(e); }
+    } else charts.push({ title: '', entries: flat });
+    // total: SAYI ise tum grafiklerde sabit; KOLON adiysa her grafigin total'i o grafigin satirlarindan okunur
+    // (senaryo: "her timeline'in uzunlugu her core'da ayni" -> tek deger). Satirlar celisirse ACIK uyari. Hesaplama YOK.
+    const totalStr = t.total != null ? String(t.total) : '';
+    const totalIsNum = /^\\d+$/.test(totalStr) && parseInt(totalStr, 10) > 0;
+    const positionedWanted = !!t.start;
+    let maxTotal = 1;
+    for (const c of charts) {
+      let tot = 0, terr = '';
+      if (positionedWanted) {
+        if (totalIsNum) tot = parseInt(totalStr, 10);
+        else if (totalStr) {
+          const vals = c.entries.map(function (e) { return toIntVal(e.row[totalStr]); }).filter(function (v) { return v != null; });
+          tot = vals.length ? vals[0] : 0;
+          if (vals.some(function (v) { return v !== vals[0]; })) terr = '⚠ "' + totalStr + '" differs within this chart — using ' + tot;
+          if (!(tot > 0)) { terr = '⚠ positioned timeline needs a positive numeric "total" — sequential layout'; tot = 0; }
+        } else terr = '⚠ positioned timeline (start) requires a "total" (number or column) — sequential layout';
+      }
+      c.total = tot; c.terr = terr; c.positioned = positionedWanted && tot > 0;
+      if (tot > maxTotal) maxTotal = tot;
+    }
+    // scale: coklu-grafikte varsayilan 'proportional' (uzun timeline fiziksel olarak da uzun); 'fit' -> hepsi tam genislik.
+    // st.tlFit runtime toggle'i (toolbar) config'i EZER: true=normalize(fit), false=orantili, undefined=config.
+    const fitMode = st.tlFit != null ? st.tlFit : (t.scale === 'fit');
+    const prop = chartCol && !fitMode;
+    // YATAY ZOOM: st.tlZoom (>=1) grafik/ekseni pane'den GENİŞ çizer -> bloklar büyür, .tl-wrap yatay kayar.
+    // zoom=1 = pane'e SIĞDIR (varsayılan). Konumlu (start) modda anlamlı; toolbar − / Fit / + ile ayarlanır.
+    const zoom = (st.tlZoom && st.tlZoom > 1) ? st.tlZoom : 1;
+    const legend = Object.create(null); const legendOrder = [];
+    const fr = [0, 0.25, 0.5, 0.75, 1];
+    let h = '<div class="tl-wrap">';
+    if (missing.length) h += '<div class="det-empty">⚠ timeline column(s) hidden or unknown: ' + esc(missing.join(', ')) + ' — enable via ▦ Columns</div>';
+    for (const c of charts) {
+      const total = c.total, positioned = c.positioned;
+      const baseW = (prop && positioned) ? (total / maxTotal * 100) : 100;
+      // konumlu grafiğe (tek ya da çok) AÇIK genişlik ver -> zoom>1'de pane'i aşar (yatay scroll); tek-grafik zoom=1'de tam pane.
+      const wpct = baseW * zoom;
+      const useW = chartCol || positioned;
+      h += '<div class="tl-chart"' + (useW ? ' style="width:' + wpct + '%"' : '') + '>';
+      if (chartCol) h += '<div class="tl-ctitle">' + esc(c.title) + (positioned ? (' <span class="tl-ctot">· ' + (t.totalLabel ? esc(String(t.totalLabel)) + ' ' : '') + total + (t.unit ? (' ' + esc(String(t.unit))) : '') + '</span>') : '') + '</div>';
+      if (c.terr) h += '<div class="det-empty">' + c.terr + '</div>';
+      // total ETIKETI: totalLabel verilmisse eksende "<etiket>: <total> <birim>" (VARSAYILMAZ). Chart bolunmusse baslikta zaten var.
+      if (positioned && !chartCol && t.totalLabel) h += '<div class="tl-tcap">' + esc(String(t.totalLabel)) + ': ' + total + (t.unit ? (' ' + esc(String(t.unit))) : '') + '</div>';
+      if (positioned) {
+        const unit = t.unit ? (' ' + String(t.unit)) : '';
+        h += '<div class="tl-lane tl-axis"><div class="tl-lname"></div><div class="tl-track tl-pos tl-axistrack">';
+        for (let fi = 0; fi < fr.length; fi++) {
+          const tx = fi === 0 ? 'translateX(0)' : (fi === fr.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)');
+          h += '<span class="tl-tick" style="left:' + (fr[fi] * 100) + '%;transform:' + tx + '">' + Math.round(total * fr[fi]) + (fi === fr.length - 1 ? esc(unit) : '') + '</span>';
+        }
+        h += '</div></div>';
+      }
+      const lanes = buildTimelineModel(sec, t, c.entries);
+      for (let li = 0; li < lanes.length; li++) {
+        const ln = lanes[li];
+        const trackStyle = hasSet ? (' style="' + (positioned ? 'height' : 'min-height') + ':' + trackH + 'px"') : '';   // küme sayısına göre yükseklik
+        h += '<div class="tl-lane' + (li % 2 ? ' tl-alt' : '') + '"><div class="tl-lname" title="' + esc(ln.key) + '">' + esc(ln.key) + '</div><div class="tl-track' + (positioned ? ' tl-pos' : '') + (hasSet ? ' tl-hasset' : '') + '"' + trackStyle + '>';
+        if (positioned) h += '<i class="tl-grid" style="left:25%"></i><i class="tl-grid" style="left:50%"></i><i class="tl-grid" style="left:75%"></i>';
+        for (const b of ln.blocks) {
+          const cv = b.row[colorCol] != null ? String(b.row[colorCol]) : '';
+          let colr = null;
+          const vm = valueMapEntry((sec.valueMap || {})[colorCol], cv, cv); if (vm && vm.hex) colr = vm.hex;
+          if (!colr) { const bh = badgeHex(matchBadge((sec.badges || {})[colorCol], cv)); if (bh) colr = bh; }
+          if (!colr) colr = tlColor(cv);
+          const lbl = b.row[labelCol] != null ? String(b.row[labelCol]) : '';
+          // ⏱ timeline.set: bu bloğun alt dizileri (device/signal kümeleri) — attachTimelineSet __tlsets__'e koydu
+          const tsets = b.row['__tlsets__'];
+          const nonEmpty = Array.isArray(tsets) ? tsets.filter(function (s) { return s && s.items && s.items.length; }) : [];
+          const hasBlkSet = nonEmpty.length > 0;
+          let setHtml = '';
+          // caption = kümenin title'ı VERİLMİŞSE her zaman yazılır (tek set'te de) — chip'lerin soluna küçük etiket
+          if (hasBlkSet) setHtml = tsets.map(function (s) {
+            if (!s || !s.items || !s.items.length) return '';
+            const capH = s.title ? '<span class="tl-scap" title="' + esc(String(s.title)) + '">' + esc(String(s.title)) + '</span>' : '';
+            const chips = s.items.map(function (d, di) { const dash = s.dashes && s.dashes[di]; return '<span class="tl-chip' + (dash ? ' tl-chip-dash' : '') + '" style="color:' + colr + ';background:' + colr + '2e;border-color:' + colr + '66">' + esc(String(d)) + '</span>'; }).join('');
+            return '<span class="tl-setrow">' + capH + '<span class="tl-set">' + chips + '</span></span>';
+          }).join('');
+          const baseTip = cols.map(function (col) { return col + ': ' + (b.row[col] != null ? b.row[col] : ''); }).join('\\n');
+          // tooltip her zaman TAM listeleri taşır (blok kırpsa bile): her küme "title (N): ..." (title yoksa isimsiz)
+          const setTip = nonEmpty.map(function (s) { return (s.title ? s.title + ' ' : '') + '(' + s.items.length + '): ' + s.items.join(', '); }).join('\\n');
+          const tip = baseTip + (setTip ? ('\\n\\n' + setTip) : '');
+          if (cv !== '' && !(cv in legend)) { legend[cv] = colr; legendOrder.push(cv); }
+          const geom = positioned
+            ? 'left:' + ((b.s || 0) / total * 100) + '%;width:' + Math.max((t.width ? b.w : 1) / total * 100, 0.5) + '%'
+            : 'flex-grow:' + b.w;
+          h += '<div class="tl-blk' + (positioned ? ' tl-abs' : '') + (hasBlkSet ? ' tl-hasset' : '') + '" style="' + geom + ';background:' + colr + '33;border-color:' + colr + '" title="' + esc(tip) + '" data-ri="' + b.ri + '"><span class="tl-lbl">' + esc(lbl) + '</span>' + setHtml + '</div>';
+        }
+        h += '</div></div>';
+      }
+      h += '</div>';   // .tl-chart
+    }
+    // blok TIKLAMA detay kartı (docked, timeline'ın altında): render'da BOŞ gelir; showTlDetail() DOM'da doldurur
+    // (graph'ın gv-detail deseni — seçili bloğun TÜM alanları + device kümesi, flag/valueMap çözümüyle).
+    h += '<div class="tl-detail" style="display:none"><span class="tl-dclose" title="Close">✕</span><h4 class="tl-dtitle"></h4><div class="tl-dbody"></div></div>';
+    if (legendOrder.length >= 2) {   // tek seri legend istemez; >=2'de KIMLIK yalniz renkte kalmasin
+      // legend BAŞLIĞI: renkler hangi field'ı (color kolonu) kodluyor -> "Part:" gibi
+      h += '<div class="tl-legend"><span class="tl-lgcap">' + esc(colorCol) + ':</span>';
+      const cap = 12;
+      for (let gi = 0; gi < Math.min(legendOrder.length, cap); gi++) { const v = legendOrder[gi]; h += '<span class="tl-lgitem"><i class="tl-lgsw" style="background:' + legend[v] + '"></i>' + esc(v) + '</span>'; }
+      if (legendOrder.length > cap) h += '<span class="tl-lgitem tl-lgmore">+' + (legendOrder.length - cap) + '</span>';
+      h += '</div>';
+    }
+    h += '</div>';
+    return h;
+  }
+  // timeline satırlarını data-ri sırasıyla düz listeye indir (buildTimelineModel/tlFlat ile AYNI sıra: grouped -> base+j)
+  function tlRows(sec) {
+    if (!sec) return [];
+    return sec.grouped ? (sec.groups || []).reduce(function (a, g) { return a.concat(g.rows || []); }, []) : (sec.rows || []);
+  }
+  // blok TIKLAMA detayı (docked kart): seçili bloğun TÜM görünür alanları + device kümesi. Graph gv-detail deseni:
+  // flag/valueMap/badge çözümü + ham değer parantezde. det kutusu buildTimeline'da BOŞ render edilir; burada doldurulur.
+  function showTlDetail(name, ri) {
+    const st = secState[name]; if (!st || !st.sec) return;
+    const body = bodyEl(name); if (!body) return;
+    const det = body.querySelector('.tl-detail'); if (!det) return;
+    const row = tlRows(st.sec)[ri]; if (!row) { det.style.display = 'none'; st.tlSel = null; return; }
+    const t = st.sec.timeline || {};
+    const cols = displayCols(st);
+    const _df = st.sec.flags || {}, _dvm = st.sec.valueMap || {};
+    const _cell = function (c, raw) {
+      if (_df[c]) { const fh = flagsHtml(_df[c], raw); if (fh != null) return fh + ' <span class="gd-int">(' + esc(shortVal(raw)) + ')</span>'; }
+      if (_dvm[c]) { const ve = valueMapEntry(_dvm[c], raw, shortVal(raw)); if (ve) { const pill = ve.hex ? '<span class="badge" style="background:' + ve.hex + '30;color:' + ve.hex + '">' + esc(ve.text) + '</span>' : '<span class="vmap">' + esc(ve.text) + '</span>'; const sv = shortVal(raw); return pill + (ve.text !== sv ? ' <span class="gd-int">(' + esc(sv) + ')</span>' : ''); } }
+      return esc(shortVal(raw));
+    };
+    const titleCol = (t.label && cols.indexOf(t.label) !== -1) ? t.label : (cols.length ? cols[0] : '');
+    const title = (titleCol && row[titleCol] != null) ? shortVal(row[titleCol]) : '';
+    let html = cols.map(function (c) { return '<div class="grow2"><span>' + esc(c) + '</span><b>' + _cell(c, row[c]) + '</b></div>'; }).join('');
+    const tsets = row['__tlsets__'];   // her küme (device/signal) -> ayrı grow2 satırı; kesikli bayrakları (dashWhen) yansıtılır
+    if (Array.isArray(tsets)) tsets.forEach(function (s, si) {
+      if (!s || !s.items || !s.items.length) return;
+      const cap2 = (typeof s.title === 'string' && s.title) ? s.title : 'set' + (tsets.length > 1 ? (' ' + (si + 1)) : '');   // title (VARSAYILMAZ; yoksa nötr "set"/"set N")
+      const chips = s.items.map(function (d, di) { const dash = s.dashes && s.dashes[di]; return '<span class="tl-chip' + (dash ? ' tl-chip-dash' : '') + '" style="color:var(--vscode-textLink-foreground,#58a6ff);border-color:rgba(88,166,255,0.4)">' + esc(String(d)) + '</span>'; }).join('');
+      html += '<div class="grow2"><span>' + esc(cap2) + ' (' + s.items.length + ')</span><b>' + chips + '</b></div>';
+    });
+    det.querySelector('.tl-dtitle').textContent = title;
+    det.querySelector('.tl-dbody').innerHTML = html;
+    det.style.display = 'block';
+    const blks = body.querySelectorAll('.tl-blk'); for (let i = 0; i < blks.length; i++) blks[i].classList.toggle('tl-sel', blks[i].getAttribute('data-ri') === String(ri));
+    st.tlSel = ri;
+  }
+  function hideTlDetail(name) {
+    const st = secState[name]; if (st) st.tlSel = null;
+    const body = bodyEl(name); if (!body) return;
+    const det = body.querySelector('.tl-detail'); if (det) det.style.display = 'none';
+    const blks = body.querySelectorAll('.tl-blk.tl-sel'); for (let i = 0; i < blks.length; i++) blks[i].classList.remove('tl-sel');
+  }
+  // ⏱ timeline.set OTOMATİK SIĞDIRMA: bir bloğa sığmayan device chip'lerini sondan gizle, yerine "+N" rozeti koy
+  // (tam liste her zaman tooltip'te). ÖLÇÜME dayalı (scroll/clientHeight) -> render SONRASI çalışır. Blok genişleyince
+  // (zoom) baştan tüm chip'leri gösterip yeniden hesaplar -> daha fazlası sığar. (DOM shim ölçemez -> canlı doğrulanır.)
+  function fitTimelineSets(root) {
+    if (!root || !root.querySelectorAll) return;
+    const sets = root.querySelectorAll('.tl-blk.tl-hasset .tl-set');
+    for (let si = 0; si < sets.length; si++) {
+      const setEl = sets[si];
+      const chips = [];
+      for (let ci = 0; ci < setEl.children.length; ci++) { const c = setEl.children[ci]; if (('' + (c.className || '')).indexOf('tl-more') === -1) chips.push(c); }
+      for (const c of chips) c.style.display = '';                          // önce hepsini görünür yap (temiz başlangıç)
+      let more = setEl.querySelector('.tl-more'); if (more) { more.remove(); more = null; }
+      const fits = function () { return setEl.scrollHeight <= setEl.clientHeight + 1 && setEl.scrollWidth <= setEl.clientWidth + 1; };
+      if (fits()) continue;                                                 // hepsi sığıyor -> dokunma
+      more = document.createElement('span'); more.className = 'tl-chip tl-more'; setEl.appendChild(more);
+      let hidden = 0;
+      for (let k = chips.length - 1; k >= 0 && !fits(); k--) { chips[k].style.display = 'none'; hidden++; more.textContent = '+' + hidden; }
+      if (hidden === 0) { more.remove(); } else { more.title = hidden + ' more'; }   // hiç gizlenmediyse rozet gereksiz
+    }
   }
   function paint(name) {
     const st = secState[name];
@@ -3155,13 +3974,24 @@ function getHtml(): string {
       body.innerHTML = '<div class="empty">Master section for "' + esc(name) + '" is empty or missing.</div>';
       return;
     }
+    if (st.sec.error) {   // bölüm kurulumu hata verdi (örn geçersiz levels config'i) -> açık uyarı, panelin kalanı çalışır
+      body.innerHTML = '<div class="empty">⚠ ' + esc(st.sec.error) + '</div>';
+      return;
+    }
     if (st.view === 'graph') { renderGraph(name); applyDetails(name); return; }
+    if (st.view === 'timeline' && !st.sec.timeline) st.view = 'table';   // config'ten "timeline" kaldırıldı -> tabloya dön (butonsuz kilitli kalma)
+    if (st.view === 'timeline') {
+      body.innerHTML = '<div class="summary">' + esc(st.sec.summary) + '</div>' + toolbarHtml(st) + buildTimeline(st);
+      fitTimelineSets(body);   // device chip'leri bloğa sığdır (taşanları "+N" rozetine indir) — render sonrası ölçüm
+      if (st.tlSel != null) showTlDetail(name, st.tlSel);   // zoom/yeniden çizimde açık detay kartını geri getir
+      return;
+    }
     const cols = displayCols(st);
     const grouped = st.sec.grouped;
     const allRows = grouped ? st.sec.groups.reduce((a, g) => a.concat(g.rows), []) : st.sec.rows;
     const numCols = numericCols(cols, allRows);
     st.numCols = numCols;   // ▦ Columns menüsü per-kolon base düğmesi için kullanır
-    const opts = { numCols: numCols, colBase: st.colBase || {}, bars: st.sec.bars || {}, links: st.sec.links || {}, badges: st.sec.badges || {}, valueMap: st.sec.valueMap || {}, flags: st.sec.flags || {}, sortCol: st.sortCol };
+    const opts = { numCols: numCols, colBase: st.colBase || {}, bars: st.sec.bars || {}, links: st.sec.links || {}, badges: st.sec.badges || {}, valueMap: st.sec.valueMap || {}, flags: st.sec.flags || {}, srcCols: st.sec.srcCols || [], sortCol: st.sortCol };
     const summary = '<div class="summary">' + esc(st.sec.summary) + '</div>';
     const bar = toolbarHtml(st);
     let table;
@@ -3183,6 +4013,8 @@ function getHtml(): string {
     if (!menu) return;
     if (!st) { menu.innerHTML = ''; return; }
     let h = '<div class="cols-title">Columns — drag to reorder, toggle visibility</div>';
+    // toplu aksiyonlar (Sections menüsüyle ORTAK): tüm kolonları aç / kapat (kapatta ilk GÖRÜNÜR kolon kalır)
+    h += '<div class="cols-actions"><div class="cm-item col-showall">Show all</div><div class="cm-item col-hideall" title="Keeps the first visible column">Hide all</div></div>';
     st.order.forEach(label => {
       const checked = st.hidden.indexOf(label) === -1 ? ' checked' : '';
       h += '<div class="cols-item" data-label="' + esc(label) + '" draggable="true">' +
@@ -3274,6 +4106,20 @@ function getHtml(): string {
     // çapraz-referans linki: hedef nesneye git
     const xref = e.target.closest('.xref');
     if (xref) { e.preventDefault(); e.stopPropagation(); gotoXref(xref.dataset.sec, xref.dataset.match, xref.dataset.val); return; }
+    // kaynak konumu linki (sourceLine): "dosya:satır" -> editörde aç (uzantı findFiles ile çözer)
+    const srcref = e.target.closest('.srcref');
+    if (srcref) { e.preventDefault(); e.stopPropagation(); vscodeApi.postMessage({ type: 'openSource', loc: srcref.dataset.loc || '' }); return; }
+    // ⏱ timeline: detay kartı kapat (✕)
+    const tlx = e.target.closest('.tl-dclose');
+    if (tlx) { const p = e.target.closest('.pane[data-idx]'); if (p) hideTlDetail(currentNames[+p.getAttribute('data-idx')]); e.stopPropagation(); return; }
+    // ⏱ timeline: bloğa tıkla -> docked detay kartı (aynı bloğa tekrar tıkla -> kapat)
+    const tlb = e.target.closest('.tl-blk');
+    if (tlb) {
+      const p = e.target.closest('.pane[data-idx]');
+      if (p) { const nm = currentNames[+p.getAttribute('data-idx')]; const st2 = secState[nm]; const ri = parseInt(tlb.getAttribute('data-ri'), 10);
+        if (st2 && st2.tlSel === ri) hideTlDetail(nm); else showTlDetail(nm, ri); }
+      e.stopPropagation(); return;
+    }
     // hücre bağlam menüsü: kopya / düzenle
     const cc = e.target.closest('.cell-copy');
     if (cc) { vscodeApi.postMessage({ type: 'copy', text: cc.dataset.text || '' }); for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return; }
@@ -3281,9 +4127,9 @@ function getHtml(): string {
     if (cw) { vscodeApi.postMessage({ type: 'copyWatch', text: cw.dataset.el || '' }); for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return; }
     const dsh = e.target.closest('.det-show');
     if (dsh) {   // talep-üzerine detay aç: kaydet + uzantıdan çek + anlık "Loading…"
-      const mn = dsh.dataset.section, sel = dsh.dataset.el, dn = dsh.dataset.detail;
+      const mn = dsh.dataset.section, sel = dsh.dataset.el, dn = dsh.dataset.detail, sidx = dsh.dataset.idx, smidx = dsh.dataset.midx, soidx = dsh.dataset.oidx;
       if (!findDet(mn, sel, dn)) openDet.push({ master: mn, sel: sel, detail: dn, sec: null });
-      vscodeApi.postMessage({ type: 'openDetail', master: mn, sel: sel, section: dn });
+      vscodeApi.postMessage({ type: 'openDetail', master: mn, sel: sel, section: dn, selIndex: sidx != null ? sidx : '', selMasterIndex: smidx != null ? smidx : '', selOuterIndex: soidx != null ? soidx : '' });
       placeDetail(findDet(mn, sel, dn));
       for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden'); e.stopPropagation(); return;
     }
@@ -3345,6 +4191,23 @@ function getHtml(): string {
       }
       return;
     }
+    // Columns menüsü toplu aksiyonları (Sections'la ORTAK): tüm kolonları aç / kapat — .cols-menu yutmasından ÖNCE
+    const csa = e.target.closest('.col-showall');
+    if (csa) {
+      const name = paneName(e); const st = secState[name];
+      // gizli kolonların verisi hiç çekilmemiştir -> refetch:true (shown YOK) tüm bölümü aktif kolonlarla yeniden kurar
+      if (st && st.hidden.length) { st.hidden = []; afterColChange(name, true); }
+      e.stopPropagation(); return;
+    }
+    const cha = e.target.closest('.col-hideall');
+    if (cha) {
+      const name = paneName(e); const st = secState[name];
+      if (st) {
+        const visCols = st.order.filter(l => st.hidden.indexOf(l) === -1);
+        if (visCols.length > 1) { st.hidden = st.order.filter(l => l !== visCols[0]); afterColChange(name, false); }   // ilk GÖRÜNÜR kolon kalır (gizli kolonu keeper yapma: verisi yok)
+      }
+      e.stopPropagation(); return;
+    }
     if (e.target.closest('.cols-menu')) { e.stopPropagation(); return; }
     // başlık sağ üstü taban seçici (10/16/2) — th-sort'tan ÖNCE
     const hb = e.target.closest('.hb');
@@ -3356,10 +4219,24 @@ function getHtml(): string {
       e.stopPropagation();
       return;
     }
-    // tablo <-> graph görünüm geçişi
-    if (e.target.closest('.view-toggle')) {
+    // timeline ÖLÇEK toggle'ı: proportional <-> normalize (fit) — anlık, config'i ezer
+    const fitBtn = e.target.closest('.tl-fit-toggle');
+    if (fitBtn) {
       const name = paneName(e); const st = secState[name];
-      if (st) { st.view = st.view === 'graph' ? 'table' : 'graph'; if (st.view === 'graph' && !st.gv) st.gv = gvInit(); paint(name); }
+      if (st) { const t = (st.sec && st.sec.timeline) || {}; const cur = st.tlFit != null ? st.tlFit : (t.scale === 'fit'); st.tlFit = !cur; paint(name); }
+      return;
+    }
+    const zoBtn = e.target.closest('.tl-zoom-out'), ziBtn = e.target.closest('.tl-zoom-in');
+    if (zoBtn || ziBtn) {   // yatay zoom: 1(fit)..16, 2x adim
+      const name = paneName(e); const st = secState[name];
+      if (st) { const cur = (st.tlZoom && st.tlZoom > 1) ? st.tlZoom : 1; st.tlZoom = ziBtn ? Math.min(16, cur * 2) : Math.max(1, cur / 2); paint(name); }
+      return;
+    }
+    // tablo <-> graph <-> timeline görünüm geçişi (buton data-view taşır; eski iki-görünüm toggle'ı fallback)
+    const vtBtn = e.target.closest('.view-toggle');
+    if (vtBtn) {
+      const name = paneName(e); const st = secState[name];
+      if (st) { st.view = vtBtn.dataset.view || (st.view === 'graph' ? 'table' : 'graph'); if (st.view === 'graph' && !st.gv) st.gv = gvInit(); paint(name); }
       return;
     }
     // graph: görünüme sığdır
@@ -3571,7 +4448,7 @@ function getHtml(): string {
         const collapsed = gnode.classList.contains('gv-collapsed');
         popMenu(name, e, '<div class="cm-item gv-collapse" data-section="' + esc(name) + '" data-gkey="' + esc(gnode.dataset.gkey) + '">' + (collapsed ? 'Expand group' : 'Collapse group') + '</div>');
       } else if (gnode.dataset.el) {   // üye düğüm: satırı watch ifadesi olarak kopyala (+ talep-üzerine detay)
-        popMenu(name, e, '<div class="cm-item cell-watch" data-el="' + esc(gnode.dataset.el) + '">Copy row as watch expression</div>' + detMenu(name, gnode.dataset.el));
+        popMenu(name, e, '<div class="cm-item cell-watch" data-el="' + esc(gnode.dataset.el) + '">Copy row as watch expression</div>' + detMenu(name, gnode.dataset.el, gnode.dataset.idx, gnode.dataset.midx, gnode.dataset.oidx));
       }
       return;
     }
@@ -3586,7 +4463,7 @@ function getHtml(): string {
         h += '<div class="cm-item show-graph" data-section="' + esc(name) + '" data-ri="' + esc(trEl.dataset.ri) + '">Show in graph</div>';
       if (trEl && trEl.dataset.el)   // satırın kararlı eleman ifadesini watch için kopyala (VS Code Watch'a yapıştır)
         h += '<div class="cm-item cell-watch" data-el="' + esc(trEl.dataset.el) + '">Copy row as watch expression</div>';
-      if (!inDet && trEl && trEl.dataset.el) h += detMenu(name, trEl.dataset.el);   // talep-üzerine detay (Show/Hide)
+      if (!inDet && trEl && trEl.dataset.el) h += detMenu(name, trEl.dataset.el, trEl.dataset.idx, trEl.dataset.midx, trEl.dataset.oidx);   // talep-üzerine detay (Show/Hide); data-idx/midx -> \${selected_index}/\${selected_master_index}
       if (td.dataset.lv) {   // bu hücrenin alanına GDB watchpoint'i (değer değişince durdurur)
         if (watchedExprs.has(td.dataset.lv))
           h += '<div class="cm-item cell-unwp" data-lv="' + esc(td.dataset.lv) + '">Remove watchpoint</div>';
@@ -3662,6 +4539,8 @@ function getHtml(): string {
   }
   function buildSectionsMenu() {
     let h = '<div class="cols-title">Sections — drag to reorder, toggle visibility</div>';
+    // toplu aksiyonlar (Columns menüsüyle ORTAK): tüm sekmeleri aç / kapat (kapatta aktif sekme açık kalır)
+    h += '<div class="cols-actions"><div class="cm-item sec-showall">Show all</div><div class="cm-item sec-hideall" title="Keeps the active tab">Hide all</div></div>';
     if (!sectionOrder.length) h += '<div class="cols-item">—</div>';
     sectionOrder.forEach(n => {
       const checked = hiddenSections.indexOf(n) === -1 ? ' checked' : '';
@@ -3671,20 +4550,46 @@ function getHtml(): string {
     });
     secMenu.innerHTML = h;
   }
+  // Sections menüsünü verilen noktada aç (Sections butonu VE sekme sağ-tıkı aynı menüyü kullanır — Columns'la ortak mantık)
+  function openSectionsMenu(x, y) {
+    for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden');
+    buildSectionsMenu();
+    secMenu.style.position = 'fixed';
+    secMenu.style.left = Math.max(8, Math.min(x, window.innerWidth - 240)) + 'px';
+    secMenu.style.top = Math.min(y, window.innerHeight - 40) + 'px';
+    secMenu.classList.remove('hidden');
+  }
   secBtn.addEventListener('click', e => {
     e.stopPropagation();
     const willOpen = secMenu.classList.contains('hidden');
     for (const mm of document.querySelectorAll('.cols-menu')) mm.classList.add('hidden');
     if (willOpen) {
-      buildSectionsMenu();
       const r = secBtn.getBoundingClientRect();
-      secMenu.style.position = 'fixed';
-      secMenu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 240)) + 'px';
-      secMenu.style.top = (r.bottom + 4) + 'px';
-      secMenu.classList.remove('hidden');
+      openSectionsMenu(r.left, r.bottom + 4);
     }
   });
-  secMenu.addEventListener('click', e => e.stopPropagation());
+  secMenu.addEventListener('click', e => {
+    e.stopPropagation();
+    // TÜMÜNÜ GÖSTER: gizli bölümler görünür olur; verisi olmayanlar (gizliyken çekilmez) reveal DİZİSİYLE yeniden çekilir
+    if (e.target.closest('.sec-showall')) {
+      const newly = hiddenSections.slice();
+      if (!newly.length) return;
+      hiddenSections = [];
+      buildSectionsMenu(); applySectionLayout();
+      sendSections(newly);   // dizi reveal -> extension her birini refreshTarget'lar (aşağıda setSections handler)
+      return;
+    }
+    // TÜMÜNÜ GİZLE: aktif sekme açık kalır (en az 1 görünür invariantı; boş panel/null-aktif durumuna düşmeyiz)
+    if (e.target.closest('.sec-hideall')) {
+      const vis = visibleFromOrder();
+      if (vis.length <= 1) return;   // zaten tek görünür
+      const keep = (activeName && vis.indexOf(activeName) !== -1) ? activeName : vis[0];
+      hiddenSections = sectionOrder.filter(n => n !== keep);
+      activeName = keep;
+      buildSectionsMenu(); applySectionLayout(); sendSections(null);
+      return;
+    }
+  });
 
   // --- Export: tüm görünür bölümlerin verisini JSON olarak dışa aktar ---
   function buildExport() {
@@ -3794,6 +4699,12 @@ function getHtml(): string {
     tabDrag = null; clearGhost();
     for (const x of tabsEl.querySelectorAll('.tab')) x.classList.remove('drop-target');
   });
+  // sekmeye SAĞ-TIK -> Sections menüsü imlecin yanında (kolon BAŞLIĞI sağ-tıkının birebir karşılığı: ortak etkileşim)
+  tabsEl.addEventListener('contextmenu', e => {
+    const t = e.target.closest('.tab[data-idx]'); if (!t) return;
+    e.preventDefault(); e.stopPropagation();
+    openSectionsMenu(e.clientX, e.clientY);
+  });
 
   window.addEventListener('message', e => {
     const m = e.data;
@@ -3863,6 +4774,8 @@ function getHtml(): string {
         if (m.badges) st.sec.badges = m.badges;
         if (m.valueMap) st.sec.valueMap = m.valueMap;
         if (m.flags) st.sec.flags = m.flags;
+        if (m.srcCols) st.sec.srcCols = m.srcCols;
+        st.sec.timeline = m.timeline;   // ⏱ timeline ayarı sunum meta'sıdır (kaldırıldıysa undefined -> default'lar)
         if (m.bases) { st.sec.bases = m.bases; st.colBase = st.colBase || {}; for (const k in m.bases) st.colBase[k] = m.bases[k]; }
         paint(m.section); buildColsMenu(m.section);
       }
@@ -3887,6 +4800,7 @@ function getHtml(): string {
             tr[k][m.label] = src[m.label];
             if (src['__bar__' + m.label] !== undefined) tr[k]['__bar__' + m.label] = src['__bar__' + m.label];
             if (src['__edit__' + m.label] !== undefined) tr[k]['__edit__' + m.label] = src['__edit__' + m.label];
+            if (src['__src__' + m.label] !== undefined) tr[k]['__src__' + m.label] = src['__src__' + m.label];
           }
           paint(m.section); buildColsMenu(m.section);
           if (m.ts) tsEl.textContent = 'updated ' + m.ts;

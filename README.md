@@ -44,13 +44,16 @@ Toggle any section to an interactive **node graph**. Linked lists and arrays flo
   assumptions about your layout, no changes to your program.
 - **One tab per structure.** Each named section becomes its own table; tabs are
   generated dynamically and ordered as they appear in the file.
-- **Five traversal modes.** `linked_list` (head pointer + `next` field),
+- **Six traversal modes.** `linked_list` (head pointer + `next` field),
   `array` (`count` elements with `.`/`->` access), `index_list` (a list
   living inside an array, linked by a *next-index* field — empty slots skipped),
   `tree` (walk a tree from `root` by its child pointers — `children` defaults to
-  `["left","right"]` — drawn as a hierarchical tree in the graph view), and
+  `["left","right"]` — drawn as a hierarchical tree in the graph view),
   `walk` (a condition-bounded cursor unwind — e.g. a frame-pointer call-stack
-  walk — that starts at `start` and advances while a `while` predicate holds).
+  walk — that starts at `start` and advances while a `while` predicate holds),
+  and `nested_array` (an N-level array — e.g. `struct_my* array[core_count]`
+  with `array[i][j].array2[k]` — via a `levels[]` list with named levels:
+  `${core_index}`, `${job}.name`).
 - **Grouping (tree).** Relate sections: a section can show, in its own tab, as a
   collapsible tree grouped under a master section (`groupBy` + `${master}`) — e.g.
   every process's semaphores under its process node — all at once, with a
@@ -200,10 +203,10 @@ Every field, across all modes:
 
 | Field     | Modes | Default | Meaning |
 |-----------|-------|---------|---------|
-| `mode`    | all | — (required) | `"linked_list"`, `"array"`, `"index_list"`, `"tree"`, or `"walk"`. Selects the traversal. |
+| `mode`    | all | — (required) | `"linked_list"`, `"array"`, `"index_list"`, `"tree"`, `"walk"`, `"nested_array"` (N-level array via `levels[]`; naming a level `"core"` yields `${core}`/`${core_index}` tokens; part exprs accept accessor / constant / `${expr}` template / `::global`). Selects the traversal. |
 | `root`    | most | — (required) | Starting expression in your program's own syntax (head pointer, array, buffer, or tree root). May contain `${master}` (grouping). For `walk`, use `start` instead — `root` is only a fallback when `start` is omitted. |
 | `children`| tree | `["left","right"]` | Child-pointer field names followed from each node (BFS). The graph view lays the result out as a hierarchical tree. |
-| `fields`  | all | — (required) | Ordered list of `{ "label", "expr" }` columns. `label` is the header (and first column = row identity); `expr` is the accessor appended after the element, OR a computed expression using `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (render as a usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference — jump to the target row whose `match` column equals this value; `match` defaults to the target's first column), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator make a variant/tagged‑union), `"editable": true` (right‑click → **Edit value…** writes via GDB `set var`; assignable fields only), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value, e.g. `expr:"data"` + `wrap:"((widget_t *)${expr})->x"`), and/or `"badge": { "<value>": "<color>" }` (value→color badge — names like `green`/`red`/`amber`/`cyan` or `#rrggbb` — overriding the built‑in `State` coloring), and/or `"valueMap": { "<value>": "<text>" \| { "text", "color" } }` (render a value as custom **text + color** — the text‑changing superset of `badge`; applies in the table cell and the graph card), `"flags": { "<mask>": "<name>" \| { "text", "color" } }` (decode a bit-flag integer to named flags by mask), and/or `"symbol": true` (treat the value as a **code address** and show its `function+offset` via GDB `print/a` — e.g. a callstack PC → function name; unresolved addresses stay as the address). |
+| `fields`  | all | — (required) | Ordered list of `{ "label", "expr" }` columns. `label` is the header (and first column = row identity); `expr` is the accessor appended after the element, OR a computed expression using `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (render as a usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference — jump to the target row whose `match` column equals this value; `match` defaults to the target's first column), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator make a variant/tagged‑union), `"editable": true` (right‑click → **Edit value…** writes via GDB `set var`; assignable fields only), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value, e.g. `expr:"data"` + `wrap:"((widget_t *)${expr})->x"`), and/or `"badge": { "<value>": "<color>" }` (value→color badge — names like `green`/`red`/`amber`/`cyan` or `#rrggbb` — overriding the built‑in `State` coloring), and/or `"valueMap": { "<value>": "<text>" \| { "text", "color" } }` (render a value as custom **text + color** — the text‑changing superset of `badge`; applies in the table cell and the graph card), `"flags": { "<mask>": "<name>" \| { "text", "color" } }` (decode a bit-flag integer to named flags by mask), and/or `"symbol": true` (treat the value as a **code address** and show its `function+offset` via GDB `print/a` — e.g. a callstack PC → function name; unresolved addresses stay as the address), and/or `"sourceLine": true` (resolve a **code address** to its source `file:line` via GDB `info line` — **click the cell** to open it in the editor; blank if built without `-g`). |
 | `next`    | linked_list, index_list, walk | — (set it) | linked_list: the pointer field to the next node (used as `cursor->next`). index_list: the field holding the next **index**, OR a `${expr}` template that computes it (like `wrap` — `${expr}` is the element; e.g. `"${expr}.link.idx"` or `"g_succ[${expr}.id]"`). walk: a template that computes the next **cursor** from the current one — `${expr}` is the current raw cursor value (e.g. `"*(unsigned long *)(${expr})"`), or `${wrapped_expr}` when a `cast`/`wrap` is set (e.g. `"${wrapped_expr}->prev"`). The traversal uses this verbatim, so set it; it is only assumed to be `next` when building a grouped master's selector expression. |
 | `head`    | index_list | — | Starting **index** expression, read once. May contain `${master}` (grouping). |
 | `nil`     | index_list | `-1` | Sentinel index that ends the walk. May contain `${master}` (grouping). |
@@ -559,7 +562,7 @@ Any `fields` entry can carry these — one example each:
 { "label": "Free", "expr": "${expr}->stack_size - ${expr}->stack_used" }
 
 // Element index: ${index} = array subscript (array) / slot index (index_list) ONLY.
-// Not available in linked_list/tree (no array index there). Standalone like ${expr}.
+// Not available in linked_list/tree/walk (no array index there). Substituted anywhere in the expr.
 { "label": "Idx",  "expr": "${index}" }
 { "label": "Name", "expr": "g_names[${index}]" }
 

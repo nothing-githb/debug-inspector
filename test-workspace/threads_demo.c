@@ -72,6 +72,38 @@ typedef struct {
     int   kind;
 } box_t;
 
+/* ---------------- Panel: IKI SEVIYELI dizi (nested_array (2 level) modu) — dis dizi g_panels[], her panelin IC dizisi widgets[used] ---------------- */
+typedef struct {
+    const char *name;        /* grup basligi (nested_array (2 level) 'label') */
+    int         used;        /* ic dizide dolu eleman sayisi (nested_array (2 level) 'innerCount') */
+    widget_t    widgets[4];  /* ic dizi (nested_array (2 level) 'inner') */
+} panel_t;
+
+/* ---------------- UC SEVIYELI dizi (nested_array (3 level) modu) — kullanici yapisi:
+   struct_my* array[core_count];  array[i] TEK struct'a degil, struct_my DIZISINE isaret eder (array[i][j]);
+   her struct_my icinde ikinci bir dizi pointer'i vardir (struct_my2* array2): array[i][j].array2[k]. ---------------- */
+typedef struct { int id; int val; int start; int dur; } item_t;     /* struct_my2 (+start/dur: konumlu timeline demosu) */
+typedef struct { const char *name; int nitems; item_t *items; } job_t;   /* struct_my (items = ic dizi pointer'i) */
+
+/* ---------------- GERCEK timeline ornegi: cekirdek basina ZAMANLAMA PENCERELERI (ARINC-653 benzeri) ----------------
+   3 seviye: core -> major frame -> partition penceresi. Her pencere start_ms/dur_ms tasir; pencereler
+   arasi IDLE BOSLUKLAR vardir; major frame TOPLAM suresi 100 ms (config'te timeline.total = 100). */
+/* timeline.set demosu: her partition penceresinin ALT device kumesi (id kumesi). Timeline gorunumunde
+   her blok (pencere) icinde bu device'lar chip olarak gosterilir (set.array=devs, count=ndev, label=name). */
+/* 'off' = cihaz cevrimdisi/pasif -> timeline.set dashWhen:"off" ile o chip'in kenari KESIKLI cizilir (kosul demosu) */
+typedef struct { const char *name; int off; } sched_dev_t;
+/* timeline.set DIZI (birden cok kume) demosu: her pencere hem 'devs' (device) hem 'sigs' (signal) kumesi tasir */
+typedef struct { const char *part; int start_ms; int dur_ms; int ndev; sched_dev_t *devs; int nsig; sched_dev_t *sigs; } sched_win_t;
+typedef struct { int frame_no; int nwins; sched_win_t *wins; } sched_frame_t;
+typedef struct { const char *name; int nframes; sched_frame_t *frames; } sched_core_t;
+
+/* ---------------- COKLU TIMELINE ornegi: FARKLI UZUNLUKTA timeline'lar (her biri kendi grafik+eksen).
+   3 seviye: timeline -> core -> pencere. Uzunluk (total_ms) TIMELINE'da: "boot" 100 ms, "cruise" 250 ms.
+   Kural: bir timeline'in uzunlugu her core'da AYNI (total_ms timeline seviyesinde). Pencereler arasi bosluklar var. */
+typedef struct { const char *part; int start; int dur; } tlwin_t;
+typedef struct { const char *core; int nwins; tlwin_t *wins; } tlcore_t;
+typedef struct { const char *name; int total_ms; int ncores; tlcore_t *cores; } timeline_t;
+
 /* ---------------- Process (master: alt listeleri tutar) ---------------- */
 typedef struct process {
     int              pid;
@@ -138,6 +170,47 @@ widget_t    g_widget_pool[MAX_WIDGETS];   /* arka depo (cast dizisi) */
 dyn_array_t g_widgets;                    /* data = void*, widget_t[] gösterir */
 void       *g_slots[3];                   /* void* pointer dizisi -> her biri widget_t* (wrap örneği) */
 box_t       g_boxes[3];                    /* her goz {void *data; int kind}; data widget_t* (cast oncesi field hop) */
+panel_t     g_panels[3];                   /* IKI SEVIYELI dizi (nested_array (2 level)): dis eleman = panel, ic dizi = widgets[used] */
+int         g_panel_count = 3;
+/* UC SEVIYELI dizi (nested_array (3 level)): g_core_jobs[i] -> job dizisi (array[i][j]) -> her job'un items[k] dizisi */
+#define N_CORES 3
+#define JOBS_PER_CORE 2
+job_t       g_job_pool[N_CORES * JOBS_PER_CORE];       /* g_core_jobs[i]'nin gosterdigi bloklar */
+item_t      g_item_pool[N_CORES * JOBS_PER_CORE * 4];  /* items'larin gosterdigi havuz (job basina 4'luk blok) */
+job_t      *g_core_jobs[N_CORES];                      /* struct_my* array[core_count] karsiligi */
+int         g_core_count = N_CORES;
+int         g_jobs_per_core = JOBS_PER_CORE;           /* orta seviye sayac GLOBAL -> config'te "::g_jobs_per_core" */
+/* timeline.set demosu: her partition'in alt device (id) kumeleri — pencereler bunlara isaret eder */
+/* bazi cihazlar 'off' (cevrimdisi) -> dashWhen:"off" o chip'i kesikli kenarla cizer */
+static sched_dev_t g_dev_fms[]  = { {"adc0", 0}, {"adc1", 1} };            /* adc1 cevrimdisi */
+static sched_dev_t g_dev_nav[]  = { {"gps", 0}, {"imu", 1}, {"mag", 0} }; /* imu cevrimdisi */
+static sched_dev_t g_dev_io[]   = { {"uart", 0}, {"spi", 0} };
+static sched_dev_t g_dev_disp[] = { {"lcd", 0} };
+static sched_dev_t g_dev_comm[] = { {"eth0", 0}, {"can0", 1} };           /* can0 cevrimdisi */
+/* IKINCI kume: her pencerenin 'signal' seti (timeline.set DIZI demosu) */
+static sched_dev_t g_sig_fms[]  = { {"clk", 0} };
+static sched_dev_t g_sig_nav[]  = { {"sync", 0}, {"irq", 0} };
+static sched_dev_t g_sig_comm[] = { {"tx", 0}, {"rx", 1} };               /* rx cevrimdisi */
+/* zamanlama tablosu: statik init (kod gerekmez). Pencereler KASITLI bosluklu — timeline'da idle araliklar gorunur.
+   Her pencere ndev/devs (device kumesi) + nsig/sigs (signal kumesi) tasir (timeline.set DIZI -> iki chip satiri).
+   sigs verilmeyen pencerelerde trailing alanlar 0/NULL (C zero-init) -> o pencerede signal satiri bos/gizli. */
+static sched_win_t g_wins_c0f0[] = { {"FMS", 0, 25, 2, g_dev_fms, 1, g_sig_fms}, {"NAV", 40, 20, 3, g_dev_nav, 2, g_sig_nav}, {"IO", 75, 15, 2, g_dev_io} };   /* 25-40 ve 60-75 idle */
+static sched_win_t g_wins_c0f1[] = { {"NAV", 10, 30, 3, g_dev_nav, 2, g_sig_nav}, {"FMS", 55, 25, 2, g_dev_fms, 1, g_sig_fms} };                   /* 0-10, 40-55, 80-100 idle */
+static sched_win_t g_wins_c1f0[] = { {"DISP", 5, 20, 1, g_dev_disp}, {"COMM", 50, 35, 2, g_dev_comm, 2, g_sig_comm} };                  /* 0-5, 25-50, 85-100 idle */
+static sched_win_t g_wins_c1f1[] = { {"COMM", 0, 45, 2, g_dev_comm, 2, g_sig_comm}, {"DISP", 70, 20, 1, g_dev_disp} };                  /* 45-70, 90-100 idle */
+static sched_frame_t g_frames_c0[] = { {0, 3, g_wins_c0f0}, {1, 2, g_wins_c0f1} };
+static sched_frame_t g_frames_c1[] = { {0, 2, g_wins_c1f0}, {1, 2, g_wins_c1f1} };
+sched_core_t g_sched[2] = { {"cpu0", 2, g_frames_c0}, {"cpu1", 2, g_frames_c1} };
+int          g_sched_cores = 2;
+/* --- coklu timeline verisi: 2 timeline x 2 core; boot 100ms, cruise 250ms (farkli uzunluk) --- */
+static tlwin_t g_boot_cpu0[]   = { {"FMS",0,25}, {"NAV",40,20}, {"IO",75,15} };      /* 25-40, 60-75, 90-100 idle */
+static tlwin_t g_boot_cpu1[]   = { {"DISP",5,20}, {"COMM",50,35} };                  /* boot: total 100 */
+static tlwin_t g_cruise_cpu0[] = { {"FMS",0,40}, {"NAV",75,60}, {"IO",175,55} };     /* cruise: total 250 */
+static tlwin_t g_cruise_cpu1[] = { {"DISP",20,75}, {"COMM",140,90} };
+static tlcore_t g_boot_cores[]   = { {"cpu0",3,g_boot_cpu0}, {"cpu1",2,g_boot_cpu1} };
+static tlcore_t g_cruise_cores[] = { {"cpu0",3,g_cruise_cpu0}, {"cpu1",2,g_cruise_cpu1} };
+timeline_t g_timelines[2] = { {"boot",100,2,g_boot_cores}, {"cruise",250,2,g_cruise_cores} };
+int        g_timeline_count = 2;
 slot_t      g_slot_pool[MAX_SLOTS];        /* index ile bagli; process basina bir blok */
 int         g_slot_head;                   /* global zincirin ilk index'i */
 kpool_t  g_pool0;
@@ -301,6 +374,37 @@ int main(void)
     g_boxes[0].data = &g_widget_pool[0]; g_boxes[0].kind = 1;
     g_boxes[1].data = &g_widget_pool[1]; g_boxes[1].kind = 1;
     g_boxes[2].data = &g_widget_pool[2]; g_boxes[2].kind = 2;
+
+    /* ---- iki seviyeli dizi (nested_array (2 level) demosu): 3 panel, her birinde used=2/3/4 widget ----
+       deger deseni deterministik: x = 100*(p+1)+w, y = 10*(p+1)+w -> gate testi bunlari dogrular */
+    for (int p = 0; p < g_panel_count; p++) {
+        g_panels[p].name = PNAMES[p % NPN];
+        g_panels[p].used = p + 2;                       /* panel0=2, panel1=3, panel2=4 widget */
+        for (int w = 0; w < g_panels[p].used; w++) {
+            g_panels[p].widgets[w].x = 100 * (p + 1) + w;
+            g_panels[p].widgets[w].y = 10 * (p + 1) + w;
+            g_panels[p].widgets[w].label = NAMES[(p * 4 + w) % NN];
+        }
+    }
+
+    /* ---- uc seviyeli dizi (nested_array (3 level) demosu): core -> job -> item. deger deseni deterministik:
+       id = 100*c + 10*j + k, val = 1000 + id -> gate testi bunlari dogrular */
+    for (int c = 0; c < N_CORES; c++) {
+        g_core_jobs[c] = &g_job_pool[c * JOBS_PER_CORE];
+        for (int j = 0; j < JOBS_PER_CORE; j++) {
+            job_t *job = &g_job_pool[c * JOBS_PER_CORE + j];
+            job->name   = NAMES[(c * JOBS_PER_CORE + j) % NN];
+            job->nitems = 2 + ((c + j) % 3);                          /* 2..4 item */
+            job->items  = &g_item_pool[(c * JOBS_PER_CORE + j) * 4];  /* job basina 4'luk blok */
+            for (int k = 0; k < job->nitems; k++) {
+                job->items[k].id    = 100 * c + 10 * j + k;
+                job->items[k].val   = 1000 + 100 * c + 10 * j + k;
+                /* konumlu timeline: baslangiclar ARALIKLI (bosluklar gorunsun), sure artan */
+                job->items[k].start = 40 * k + 15 * j + 5 * c;
+                job->items[k].dur   = 8 + 4 * k;
+            }
+        }
+    }
 
     /* ---- index-linked havuz: process başına bir blok, her blok kendi içinde zincir (-1 ile biter) ---- */
     for (int p = 0; p < N_PROC; p++) {

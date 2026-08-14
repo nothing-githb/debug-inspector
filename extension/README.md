@@ -23,7 +23,7 @@ Toggle any section to an interactive **node graph**. Linked lists and arrays flo
 ## Features
 
 - **Config-driven, zero code changes.** Describe each structure in JSON; the extension assumes no layout and needs no instrumentation in your program.
-- **Five traversal modes.** `linked_list` (follow a `next` pointer until NULL), `array` (iterate `count` elements), `index_list` (a list stored inside an array, linked by a next-*index* field, walking from `head` to `nil`; unused slots are skipped), `tree` (walk a tree from `root` by its child pointers — `"children": ["left","right"]` by default — rendered as a hierarchical tree in the graph view), and `walk` (a condition-bounded cursor unwind — the classic case being a call stack unwound by frame pointers — starting at `start` and continuing while a `while` predicate is true).
+- **Six traversal modes.** `linked_list` (follow a `next` pointer until NULL), `array` (iterate `count` elements), `index_list` (a list stored inside an array, linked by a next-*index* field, walking from `head` to `nil`; unused slots are skipped), `tree` (walk a tree from `root` by its child pointers — `"children": ["left","right"]` by default — rendered as a hierarchical tree in the graph view), `walk` (a condition-bounded cursor unwind — the classic case being a call stack unwound by frame pointers — starting at `start` and continuing while a `while` predicate is true), and `nested_array` (an N-level array — 2, 3 or more dimensions like `struct_my* array[core_count]` with `array[i][j].array2[k]` — as a `levels[]` list with **named levels**, so expressions read `${core_index}` / `${job}.name`).
 - **Arbitrary root expressions.** `root` is passed to GDB verbatim, so anything valid works: `head`, `g_sys.thread_list`, `g_kernel.pools[0]->thread_list`.
 - **Live updates.** The panel refreshes on every stop and shows a `running…` badge while the program runs; a status pill reads `stopped` / `running…` / `paused`, plus an `updated <time>` timestamp. The panel **closes automatically when the debug session ends**.
 - **Prioritized streaming refresh.** On each stop the **active tab is fetched and shown first**, then the other visible sections stream in **in the background**. **Switching tabs re-prioritizes** — the tab you open jumps the queue and is fetched next — so large workspaces stay responsive. Sections still in the queue (and newly revealed ones) show a **“Loading…”** placeholder until their data arrives, and **each tab shows a spinning ⟳** while its section is still being fetched — so you can watch sections update one by one. The Refresh button reflects the overall state.
@@ -81,9 +81,13 @@ Toggle any section to an interactive **node graph**. Linked lists and arrays flo
   (and unfetched) until you enable it from the ▦ Columns menu.
 - **Manage sections (tabs).** Hide/show whole sections from the **▤ Sections** menu
   and reorder by **dragging a tab** (or a row in the menu) — instant (client-side),
-  remembered per workspace. Revealing a hidden section fetches **only that section**
-  (not the whole panel). A section can also start hidden with `"hidden": true`
-  in config.
+  remembered per workspace. **Right-click a tab** to open the same menu at the cursor
+  (exactly like right-clicking a column header opens the Columns menu). Both menus
+  offer **Show all / Hide all**: sections' *Hide all* keeps the active tab; columns'
+  keeps the first visible column; *Show all* refetches only what was hidden (hidden
+  sections/columns are never read from GDB). Revealing a hidden section fetches
+  **only that section** (not the whole panel). A section can also start hidden with
+  `"hidden": true` in config.
 - **Readable UI.** Recognized columns get automatic styling: a `State` column becomes a colored badge (RUNNING / READY / BLOCKED / WAITING — or your own value→color map via a field's `"badge"`, or a value→text+color map via `"valueMap"`), plus a summary line per tab. Changed cells light up amber.
 - **Read-only by default (optional editing).** Debug Inspector only *reads* your data — it never calls functions. A field can opt into editing with `"editable": true`; then right-click → **Edit value…** writes it with GDB `set var`, and **only the edited row is re-read** afterwards (not the whole panel). Right-click any cell also offers **Copy cell** and **Copy row as watch expression** — the latter copies the row's stable element expression (e.g. `(g_mutexes)[5]`, or the master‑qualified path for grouped sections) so you can paste it into VS Code's **Watch** panel (VS Code has no API to add a watch entry directly). A plain‑member (or editable) cell also offers **Add watchpoint (break on change)**, which sets a GDB data watchpoint on that field's **resolved address** (one hardware register, even for linked/grouped cells) so the program stops when it changes — it doesn't write memory. A watched cell is then marked with a gold **★** (and a left accent), its hover tooltip notes the watchpoint, and its menu switches to **★ Remove watchpoint** (runs GDB `delete`). Stars persist across refreshes and clear when the session ends.
 - **Leveled, color-coded logging.** A *Debug Inspector* Output channel (rendered with the `log` syntax so timestamps/severities/values are colorized); pick `off` / `info` / `debug`.
@@ -110,24 +114,26 @@ The config file (default `debug-inspector.json`) is a JSON object that is a **ma
 
 | Field     | Modes                       | Meaning |
 |-----------|-----------------------------|---------|
-| `mode`    | all *(required)*            | `"linked_list"`, `"array"`, `"index_list"`, `"tree"`, or `"walk"`. |
-| `root`    | most *(required)*           | Starting expression in your program's own syntax (head pointer, array, or tree root). May contain `${master}` (grouping). For `walk`, use `start` instead. |
+| `mode`    | all *(required)*            | `"linked_list"`, `"array"`, `"index_list"`, `"tree"`, `"walk"`, or `"nested_array"` (N-level array via `levels[]` with **named levels**). |
+| `root`    | most *(required)*           | Starting expression in your program's own syntax (head pointer, array, or tree root). May contain `${master}` (grouping). For `walk`, use `start` instead. For `nested_array`, `levels[0].array` falls back to this. |
+| `levels`  | nested_array *(required)*    | Level list, outermost first; the **last level is the rows**. Each level: `array` (part expr: accessor / `${expr}` template / `::global`; level 0 falls back to `root`), `count`, `access`, optional `label` (accessor or text template), `cast`, `wrap`, and **`name`** — naming a level `"core"` gives you `${core}` (that level's element) and `${core_index}` (its subscript) in every field/label expression. |
+| `timeline` | opt-in per section          | Adds the **⏱ Timeline** view button (present only when this key exists; `{}` uses defaults). Config: `{ "lane", "start", "width", "total", "order", "label", "color" }` — lane = lane column (default: group header); **start** = column that PLACES each block on the time axis (positioned mode: real gaps appear between blocks; `order` is then implied by position); width = duration/width column; **total** = axis end — a number, **required** in positioned mode (never derived from the data; missing/invalid → an explicit ⚠ notice and the section falls back to sequential layout); **`totalLabel`** = optional caption for the total on the axis (e.g. `"major frame"` → `major frame: 200 ms`; with none, only the number + unit show — nothing is assumed); label = block text (rendered in ink, not the series color); color = color key (badge/valueMap colors win, else a CVD-validated categorical palette — the same value always gets the same color); `unit` = axis unit on the last tick (e.g. `"ms"`); **`chart`** = a column that SPLITS the section into **separate timeline charts** — one per distinct value, each with its own title and its own axis (so timelines of different lengths render independently); with `chart`, `total` may be a **column** (each chart's axis end read from its own rows — a positive constant per chart, never computed) and **`scale`** = `"proportional"` (default: a chart's width ∝ its total, so a longer timeline is physically wider) or `"fit"` (every chart full width) — and a **⤢ Normalize** toolbar button flips between the two at runtime, so charts that are too small in proportional mode can be read at full width without editing config. In positioned mode a **− / Fit / +** horizontal-zoom control lets you widen the timeline beyond the pane (with horizontal scroll) so small blocks become readable — 1× fits the width, and lane names stay pinned while you scroll. **`set`** = a per-block **sub-array** (a set of ids read off each block's *own* element — e.g. a scheduling window's device list) rendered as chips inside the block. It's **one set object, or an array of them** (`"set": [ {…}, {…} ]`) to show several id-sets per block (a device list *and* a signal list, say) — each on its own chip row, prefixed with that set's `title` as a caption (whenever a `title` is given — a single set shows it too). Each set object: `{ "array", "count", "access", "label", "title", "dashWhen", "max" }` — `array`/`count` resolve **relative to the block element** (accessor / constant / `::global` / `"${expr}"` template; use `"${expr}->…"` for a pointer element), `label` is the field read from each sub-element (or the element itself when omitted), `access` (`.`/`->`) is the sub-element accessor, **`title`** is the caption for the set in the block tooltip (no default — with none, the tooltip shows just `(N): …`), **`dashWhen`** draws a **dashed** chip border when truthy (same `when`-style empty/`0`/`false`/NULL → false rule): a literal `true`/`false` (a no-GDB constant — dashes all or none), a bare expression like `1`/`0` (evaluated once, applied to the whole set), an accessor (`"off"`), or a `"${expr}"` template evaluated per device (e.g. `"${expr}.off != 0"`), and `max` caps the fetched count (default 64). Chips that don't fit inside a block collapse into a trailing **`+N`** badge (and reflow to show more when you zoom the timeline wider); the full set is always in the block tooltip. The view renders a lane-aligned 5-tick axis with recessive gridlines, zebra lanes, hover highlight, and an automatic legend — captioned with the `color` field's name — when the color key has ≥ 2 distinct values. **Clicking any block** opens a docked detail card below the timeline listing all of that block's fields (decoded like the graph node panel) plus its `set` chips. Without `start`, blocks pack sequentially (flex). |
 | `children`| tree                        | Child-pointer field names walked from each node (BFS); defaults to `["left","right"]`. The graph view draws the result as a hierarchical tree. |
 | `start`   | walk                        | Initial cursor (an address/value expression). In `next`/`while`/fields, `${expr}` is the current **raw cursor**; `${wrapped_expr}` is that cursor after `cast`+`wrap` (e.g. `((frame_t *)(cursor))`). |
 | `while`   | walk                        | Boolean `${expr}` template; the walk continues while it's true and stops when false (e.g. cursor within stack bounds). |
 | `next`    | linked_list, index_list, walk | Field giving the next element — a **pointer** (`cursor->next`) for linked_list, an **index** for index_list. For index_list/`walk` it may instead be a `${expr}` **template** (like `wrap`) that computes the next index/cursor, e.g. `"${expr}.link.idx"` or `"*(unsigned long *)(${expr})"`. Used verbatim, so set it (it only falls back to `next` when building a master's clickable/grouped selector). |
 | `head`    | index_list                  | Starting **index** expression. May contain `${master}` (grouping). |
 | `nil`     | index_list                  | Sentinel index that ends the walk (default `-1`). May contain `${master}` (grouping). |
-| `count`   | array                       | Expression yielding the element count (parsed as an integer). May contain `${master}` (grouping). |
+| `count`   | array, nested_array         | Expression yielding the element count (parsed as an integer; `levels[0].count` falls back to this in `nested_array`). May contain `${master}` (grouping). |
 | `access`  | array, index_list, walk     | Element-to-field accessor: `"."` (default) or `"->"` for a pointer element. (linked_list is always `->`.) In `walk` it applies to the default field path over `${wrapped_expr}`. |
 | `cast`    | array, index_list, walk     | Cast — **written in full** (e.g. `widget_t *`); no `*` is auto-added. For array/index_list it reinterprets a generic/`void*` `root` buffer. In `walk` it **types the cursor**: `${wrapped_expr}` becomes `((cast)(cursor))`, so you write `${wrapped_expr}->member` instead of raw pointer math. |
 | `wrap`    | all                         | Template that transforms the **element** before field access; `${expr}` is the element. In `walk` it wraps the (cast-typed) cursor to form `${wrapped_expr}`; `${expr}` there stays the **raw cursor value** (so `next`/`while` arithmetic is unaffected). |
-| `label`   | master sections             | Expression evaluated on the master element to title each tree node when another section groups by this one. |
+| `label`   | master sections, nested_array | Accessor evaluated on the master/outer element to title its group/node — **or a text template**: if it contains `${`, no GDB read happens and `${index}` (the labeled element's own subscript) / `${outer_index}` / `${master_index}` are substituted into the literal text (e.g. `"core ${index}"`). Falls back to the outer index. |
 | `groupBy` | grouping sections           | Names a master section; renders this section as a collapsible tree, one group per master element (use `${master}` in `root`/`head`/`count`/`nil`). |
 | `selectedFrom` | detail sections        | Names a master section; makes this an **on-demand detail** — *not* a tab. Right-click a master row/node → **Show … (detail)** to build it for that one element. `${selected}` (in this section's traversal expressions — `root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` — and in any field `expr`/`wrap`/`when`/`bar`; *not* `cast`) is the selected element's stable expression. |
 | `hidden`  | all                         | `true` starts this section's tab hidden (until shown from the ▤ Sections menu). Ignored once you change section visibility in the UI. |
 | `max`     | all                         | Traversal upper bound / safety guard (default `1024`). |
-| `fields`  | all *(required)*            | Ordered list of `{ "label", "expr" }` columns (first column = row identity). `expr` is appended after the element, OR a computed expression via `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed/unfetched), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator = variant/tagged‑union), `"editable": true` (right‑click → Edit value writes via GDB `set var`), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value), `"badge": { "<value>": "<color>" }` (value→color badge, overriding the built-in `State` coloring), `"valueMap": { "<value>": "<text>"\|{text,color} }` (render a value as custom **text + color** — the text-changing superset of `badge`), `"flags": { "<mask>": "<name>"\|{text,color} }` (decode a bit-flag integer to named flags by mask), and/or `"symbol": true` (treat the value as a **code address** and show its function symbol via GDB `print/a` — e.g. a callstack PC → function name; unresolved addresses stay as the raw address). |
+| `fields`  | all *(required)*            | Ordered list of `{ "label", "expr" }` columns (first column = row identity). `expr` is appended after the element, OR a computed expression via `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed/unfetched), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator = variant/tagged‑union), `"editable": true` (right‑click → Edit value writes via GDB `set var`), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value), `"badge": { "<value>": "<color>" }` (value→color badge, overriding the built-in `State` coloring), `"valueMap": { "<value>": "<text>"\|{text,color} }` (render a value as custom **text + color** — the text-changing superset of `badge`), `"flags": { "<mask>": "<name>"\|{text,color} }` (decode a bit-flag integer to named flags by mask), and/or `"symbol": true` (treat the value as a **code address** and show its function symbol via GDB `print/a` — e.g. a callstack PC → function name; unresolved addresses stay as the raw address), and/or `"sourceLine": true` (resolve a **code address** to its source `file:line` via GDB `info line` — **click the cell** to open it in the editor; blank if built without `-g`). |
 
 #### Notes on the subtle fields
 
@@ -268,9 +274,34 @@ To skip the manual casting, add a **`cast`** (and/or `wrap`) and use **`${wrappe
     "while": "(${expr}) >= thread->stack_base && (${expr}) < thread->stack_top",  // ${expr} = raw cursor (bounds)
     "max":   64,
     "fields": [
-      { "label": "PC",   "expr": "${wrapped_expr}->pc", "base": "hex" },   // return address as a typed member
-      { "label": "Func", "expr": "${wrapped_expr}->pc", "symbol": true },  // … resolved to its function symbol
-      { "label": "FP",   "expr": "${expr}", "base": "hex" }
+      { "label": "PC",     "expr": "${wrapped_expr}->pc", "base": "hex" },   // return address as a typed member
+      { "label": "Func",   "expr": "${wrapped_expr}->pc", "symbol": true },  // … resolved to its function symbol
+      { "label": "Source", "expr": "${wrapped_expr}->pc", "sourceLine": true },  // … and its source file:line (click → open)
+      { "label": "FP",     "expr": "${expr}", "base": "hex" }
+    ]
+  }
+}
+```
+
+### Mode 6 — `nested_array` (N-level array)
+
+For **multi-level arrays** — two, three or more dimensions. `levels[]` lists the dimensions outermost-first; the **last level is the rows**, and every combination of the levels above it renders as a **collapsible group**. Naming a level gives you readable tokens: `"name": "core"` → `${core}` (that level's element) and `${core_index}` (its subscript) in every field/label expression. Part expressions (`array`/`count`) accept an accessor, a constant, a `${expr}` template (`${expr}` = the parent element — a bare `"${expr}"` means *the parent itself is the array root*, the pointer-array case), or **`::global`** for a count living in a global. Positional tokens (`${index}` = row subscript, `${master}`/`${master_index}` = the row's parent, `${outer}`/`${outer_index}` = the outermost level at 3+ levels) also work. Group headers join the level `label`s with `›`; a **template** label (containing `${`) on the last group level defines the whole header.
+
+```json
+{
+  "coreSched": {
+    "mode": "nested_array",
+    "levels": [
+      { "name": "core", "array": "g_core_jobs", "count": "g_core_count" },
+      { "name": "job",  "array": "${expr}", "count": "::g_jobs_per_core", "access": ".",
+        "label": "core ${core_index} / job ${job_index}" },
+      { "name": "item", "array": "items", "count": "nitems", "access": "." }
+    ],
+    "fields": [
+      { "label": "Core", "expr": "${core_index}" },
+      { "label": "Slot", "expr": "${item_index}" },
+      { "label": "Job",  "expr": "${job}.name" },
+      { "label": "Val",  "expr": "val" }
     ]
   }
 }
@@ -296,9 +327,10 @@ This pairs naturally with `walk` — the call-stack example above, scoped to the
     "while": "(${expr}) >= g_stack_base && (${expr}) < g_stack_top",
     "max":   64,
     "fields": [
-      { "label": "PC",   "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },
-      { "label": "Func", "expr": "*(unsigned long *)((${expr}) + 8)", "symbol": true },  // PC → function name (print/a)
-      { "label": "FP",   "expr": "${expr}", "base": "hex" }
+      { "label": "PC",     "expr": "*(unsigned long *)((${expr}) + 8)", "base": "hex" },
+      { "label": "Func",   "expr": "*(unsigned long *)((${expr}) + 8)", "symbol": true },  // PC → function name (print/a)
+      { "label": "Source", "expr": "*(unsigned long *)((${expr}) + 8)", "sourceLine": true },  // PC → file:line (info line; click → open)
+      { "label": "FP",     "expr": "${expr}", "base": "hex" }
     ]
   }
 }
@@ -402,7 +434,7 @@ Any `fields` entry can carry extra options beyond `label`/`expr`. One example ea
 { "label": "Free", "expr": "${expr}->stack_size - ${expr}->stack_used" }
 ```
 
-**Element index** — `${index}` is the element's container index: the **array subscript** in `array` mode and the **slot index** in `index_list` mode. It is **not** available in `linked_list` or `tree` — those have no array index (use `${depth}` for tree). Like `${expr}`, it makes the expression **standalone** (not appended to the element), so use it alone to show the index, or inside another expression to index a parallel array:
+**Element index** — `${index}` is the element's container index: the **array subscript** in `array` mode, the **slot index** in `index_list` mode, and the **row subscript** in `nested_array` mode. It is **not** available in `linked_list`, `tree`, or `walk` — those have no array index (use `${depth}` for tree). Like `${expr}`, it makes the expression **standalone** (not appended to the element), and it is substituted **anywhere inside the expression** (also `wrap` / `when` / `bar`), so use it alone to show the index, or inside a larger expression to index a parallel array:
 
 ```json
 { "label": "Idx",  "expr": "${index}" }
@@ -415,20 +447,32 @@ Any `fields` entry can carry extra options beyond `label`/`expr`. One example ea
 { "label": "Depth", "expr": "${depth}" }
 ```
 
-**Master element** (`${master}`) — in a **grouped** section (one with `groupBy`), `${master}` is the master element this row belongs to. Beyond `root`/`head`/`count`/`nil`, it now also works inside a field's `expr` (and `wrap`/`when`), so a child row can show or compute from its parent. You write the access (`->` for a pointer master, `.` for a value master); like `${expr}` it's standalone:
+**Master element** (`${master}`) — in a **grouped** section (one with `groupBy`) or a **`nested_array`** section, `${master}` is the element this row directly belongs to (grouped: the master row; nested_array: the row's **parent** level element). Beyond `root`/`head`/`count`/`nil`, it now also works inside a field's `expr` (and `wrap`/`when`), so a child row can show or compute from its parent. You write the access (`->` for a pointer master, `.` for a value master); like `${expr}` it's standalone:
 
 ```json
 { "label": "Proc", "expr": "${master}->name" }
 ```
 
-Using `${master}` in a section **without** `groupBy` does nothing (there's no master) — the extension leaves it unresolved (the cell errors) and shows a warning prompting you to add `groupBy` or remove `${master}`.
+Using `${master}` in a section **without** `groupBy` (and not `nested_array`) does nothing (there's no master) — the extension leaves it unresolved (the cell errors) and shows a warning prompting you to add `groupBy` or remove `${master}`.
+
+**Master index** (`${master_index}`) — the master's **subscript**: in `nested_array` the row's **parent-level** index; in a grouped section, the master row's subscript **when the `groupBy` target is `array`/`index_list`** (other master modes have no subscript, so it stays unresolved). Standalone or inside a larger expression (`"g_stats[${master_index}].hits"`), also in `wrap`/`when`/`bar`.
 
 **Selected element** (`${selected}`) — in a section with `selectedFrom`, `${selected}` is the stable expression of the master row/node you right-clicked to open the detail. It substitutes in `root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` and field `expr`/`wrap`/`when`/`bar` (everywhere except `cast`), so the detail traverses *from* that element (e.g. `"start": "${selected}->cs_fp"`). See [On-demand detail](#on-demand-detail-selectedfrom--selected).
+
+**Selected index** (`${selected_index}`) — in a `selectedFrom` detail, `${selected_index}` is the **index of the master row you clicked**. It resolves **only when the master section is `array`** (the array subscript), **`index_list`** (the slot subscript), **or `nested_array`** (the row subscript); on any other master mode (`linked_list`, `tree`, `walk`) the detail shows an explicit error rather than a cryptic GDB failure. Use it to index a parallel array by the selected element's position — e.g. `"expr": "g_stats[${selected_index}].hits"`. It is distinct from `${index}`, which is the detail's *own* row index.
+
+**Selected master index** (`${selected_master_index}`) — when the `selectedFrom` master section is **grouped** (`groupBy`) or **`nested_array`**, `${selected_master_index}` is the index of the **group's / outer master element** the clicked row belongs to (e.g. right-click a thread grouped under processes → the *process's* index; right-click a row of a `nested_array` → its **parent level's** subscript). It resolves when the master is `nested_array`, or when the `groupBy` target section is `array`/`index_list`; otherwise the detail shows an explicit error. Example — show which process slot owns the selected thread: `"expr": "g_procs[${selected_master_index}].name"`.
 
 **Symbol resolution** (`symbol`) — set `"symbol": true` on a field whose value is a **code address**, and the extension reads it with GDB `print/a` and shows the resolved **`function+offset`** instead of the raw number (an unresolved address stays as the address). The canonical use is turning a call-stack PC into a function name; it works for any address field. Read-only (no `base`/edit/watchpoint on a symbolized field):
 
 ```json
 { "label": "Func", "expr": "*(unsigned long *)((${expr}) + 8)", "symbol": true }
+```
+
+**Source location** (`sourceLine`) — set `"sourceLine": true` on a field whose value is a **code address**, and the extension resolves it with GDB `info line *(…)` and shows the **`file:line`** the address maps to (an address with no line information — e.g. code built without `-g` — leaves the cell blank). The canonical use is turning a call-stack PC into a source location right next to its `symbol` function name. **Click the cell** to open that file at that line in the editor — navigation uses the full path GDB reports (cygwin paths mapped to Windows, relative paths resolved against the workspace), so it opens the right file even when several share a basename. Requires debug info (`.debug_line`); read-only (no `base`/edit/watchpoint):
+
+```json
+{ "label": "Source", "expr": "${wrapped_expr}->pc", "sourceLine": true }
 ```
 
 **Number base** (`base`) — default display base `dec` / `hex` / `bin` (also toggle live from the `10 / 16 / 2` button in the column header):
@@ -443,7 +487,7 @@ Using `${master}` in a section **without** `groupBy` does nothing (there's no ma
 { "label": "Stack", "expr": "stack_used", "bar": { "max": "stack_size", "warn": 75, "crit": 90 } }
 ```
 
-**Cross-reference link** (`link`) — render the value as a link; clicking jumps to the row in `section` whose `match` column equals it (only when a match exists):
+**Cross-reference link** (`link`) — render the value as a link; clicking jumps to the row in `section` whose `match` column equals it (only when a match exists). Works in ordinary tables **and in on-demand detail (`selectedFrom`) sections** — a linked cell in a detail jumps to the target section just like a top-level table:
 
 ```json
 { "label": "Owner", "expr": "owner", "link": { "section": "threads", "match": "ID" } }
