@@ -1,0 +1,69 @@
+name: Release
+
+# Sürüm yayınla: package.json version'ını yükselt, commit'le, 'vX.Y.Z' tag'i push et.
+#   npm version patch   (extension/ içinde)  ->  git push --follow-tags
+# Bu workflow: testleri koşar, testler GEÇERSE .vsix üretir, GitHub Release oluşturup
+# .vsix'i asset olarak ekler. VSCE_PAT / OVSX_PAT secret'ları TANIMLIYSA Marketplace ve
+# Open VSX'e de yayınlar (yoksa o adımlar atlanır — Release her hâlükârda oluşur).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install (npm install)
+        run: npm install
+
+      - name: Unit tests (node --test)
+        run: npm test
+
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package.json=$PKG  tag=$TAG"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::Tag ($TAG) package.json version ($PKG) ile uyuşmuyor. 'npm version' kullan."
+            exit 1
+          fi
+
+      - name: Package .vsix
+        run: npm run package
+
+      - name: Create GitHub Release (+ .vsix asset)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.vsix
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Publish to VS Code Marketplace (VSCE_PAT varsa)
+        if: ${{ env.VSCE_PAT != '' }}
+        run: npx @vscode/vsce publish
+
+      - name: Publish to Open VSX (OVSX_PAT varsa)
+        if: ${{ env.OVSX_PAT != '' }}
+        run: npx ovsx publish -p "$OVSX_PAT"

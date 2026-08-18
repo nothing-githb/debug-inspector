@@ -4,3 +4,6 @@ tsconfig.json
 **/*.map
 .gitignore
 images/**
+out/test/**
+out/**/*.test.js
+.github/**

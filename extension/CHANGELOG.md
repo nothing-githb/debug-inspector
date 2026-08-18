@@ -2,6 +2,18 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.93.0] - 2026-08-18
+
+### Added
+- **Per-architecture config overlays (`debugInspector.arch` + `common`).** A single config file can now
+  serve multiple targets. Any object carrying a **`common`** key is treated as an *overlay*: it resolves to
+  `common` (the shared base) deep-merged with the block named by the new **`debugInspector.arch`** setting
+  (e.g. `ppc`, `x86`, `arm`); blocks for other archs are dropped. Objects without a `common` key are left
+  untouched, so existing configs are unaffected. Overlays work at any level — a whole section or a single
+  field — and arrays/scalars are replaced rather than merged. The classic use is a per-ABI call-stack `walk`
+  (frame-pointer math differs across x86-64 / PowerPC / ARM). Changing the setting re-resolves the config
+  live. Default `arch` is `common` (base only). See the README section *Per-architecture overlays*.
+
 ## [0.92.0] - 2026-07-17
 
 ### Added

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { applyArchOverlay } from './archOverlay';
 
 // ---------------------------------------------------------------------------
 // Tipler
@@ -206,6 +207,10 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('debugInspector.configPath')) setupConfigWatcher(context);
+      if (e.affectsConfiguration('debugInspector.arch')) {
+        log.info(`arch changed: ${vscode.workspace.getConfiguration('debugInspector').get('arch') ?? 'common'} → re-resolving config`);
+        onConfigChange();   // config semantiği değişti (yeni arch) -> veri/sunum farkına göre yenile
+      }
       if (e.affectsConfiguration('debugInspector.logLevel')) {
         logThreshold = readLogLevel();
         log.info(`log level changed: ${vscode.workspace.getConfiguration('debugInspector').get('logLevel') ?? 'info'}`);
@@ -856,8 +861,11 @@ function loadConfig(): SyncCfg | undefined {
   if (!file) return undefined;
   try {
     const text = fs.readFileSync(file, 'utf8');
-    log?.debug(`config loaded: ${file}`);
-    return JSON.parse(text) as SyncCfg;
+    // Arch overlay: 'common' + aktif arch (debugInspector.arch, varsayılan "common") çözülür.
+    // Sonuç DÜZ config -> extractSections ve gerisi hiç değişmeden çalışır.
+    const arch = vscode.workspace.getConfiguration('debugInspector').get<string>('arch') || 'common';
+    log?.debug(`config loaded: ${file} (arch="${arch}")`);
+    return applyArchOverlay(JSON.parse(text) as SyncCfg, arch);
   } catch (e: any) {
     log?.warn(`could not read/parse config: ${file} — ${e?.message ?? e}`);
     vscode.window.showWarningMessage(`Debug Inspector: could not read config (${file})`);
