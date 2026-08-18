@@ -1,16 +1,20 @@
 // archOverlay.ts — arch (mimari) overlay çözümü.
 //
-// BU DOSYA vscode'a BAĞIMLI DEĞİLDİR (saf fonksiyon) — böylece testleri düz Node ile,
-// VS Code indirmeden koşabiliriz. extension.ts bunu import eder; ayarı (debugInspector.arch)
-// orada okur ve buraya string olarak geçer.
+// BU DOSYA vscode'a BAĞIMLI DEĞİLDİR (saf fonksiyon) — testleri düz Node ile koşulur.
+// extension.ts import eder; ayarı (debugInspector.arch) orada okur ve buraya geçer.
 //
-// KURAL: 'common' anahtarı taşıyan HER nesne bir OVERLAY'dir. Çözüm = common (taban) üzerine
-// aktif arch katmanı derin-birleştirilir; common ve aktif arch DIŞINDAKİ kardeşler (yani diğer
-// arch blokları) DÜŞER. 'common' taşımayan nesneler olduğu gibi kalır -> arch kullanmayan
-// config'ler hiç etkilenmez (geriye dönük uyumlu). Her düzeyde çalışır (bölüm + field).
-// Diziler ve skalerler BİRLEŞTİRİLMEZ, DEĞİŞTİRİLİR (arch bloğu tüm diziyi ezebilir).
+// KURAL: bir nesne, içinde 'common' VEYA aktif arch (örn 'ppc'/'x86') anahtarı taşıyorsa
+// bir OVERLAY'dir. Çözüm = 'common' (varsa, taban) üzerine aktif arch bloğu derin-birleştirilir;
+// 'common' ve aktif arch DIŞINDAKİ kardeşler (diğer arch blokları) DÜŞER.
+//   - 'common' OPSİYONEL: bir bölüm sadece 'ppc', sadece 'x86' ya da herhangi bir alt küme
+//     içerebilir. Tek başına "ppc" yazıp arch=ppc seçmek çalışır.
+//   - Aktif arch'ın bloğu yoksa ve 'common' da yoksa, o nesne overlay sayılmaz (bölüm çıkmaz).
+//   - Aktif arch 'common' (varsayılan) ise sadece 'common' tabanı kullanılır.
+// Ne 'common' ne de aktif arch içeren nesneler olduğu gibi kalır -> arch kullanmayan config
+// hiç etkilenmez. Her düzeyde çalışır (bölüm + field). Diziler/skalerler birleştirilmez, DEĞİŞİR.
 //
-// NOT: 'common' her düzeyde REZERVE anahtardır — bir bölüme "common" ADINI verme.
+// NOT: 'common' ve arch adları (ppc/x86/...) her düzeyde REZERVE anahtardır — bir bölüme ya da
+// alana bu adları verme.
 
 export const ARCH_DEFAULT = 'common';
 
@@ -29,17 +33,19 @@ function deepMerge(base: any, over: any): any {
 // cfg içindeki tüm overlay'leri aktif arch'a göre çöz. arch boş/verilmezse 'common' (yalnız taban).
 export function applyArchOverlay(cfg: any, arch?: string): any {
   const active = ((arch ?? '').trim()) || ARCH_DEFAULT;
+  const hasArch = active !== ARCH_DEFAULT;                 // 'common' dışında bir arch seçili mi
   const resolve = (node: any): any => {
     if (Array.isArray(node)) return node.map(resolve);
     if (!isObj(node)) return node;
-    if ('common' in node) {                                   // OVERLAY düğümü
-      let out = resolve((node as any).common);
-      if (active !== ARCH_DEFAULT && (node as any)[active] !== undefined)
-        out = deepMerge(out, resolve((node as any)[active]));
-      return out;                                             // diğer arch kardeşleri düşer
+    const isOverlay = ('common' in node) || (hasArch && active in node);
+    if (isOverlay) {
+      let out: any = ('common' in node) ? resolve(node.common) : {};   // taban (varsa)
+      if (hasArch && node[active] !== undefined)
+        out = deepMerge(out, resolve(node[active]));                    // aktif arch üstüne
+      return out;                                                       // diğer arch kardeşleri düşer
     }
-    const out: any = {};                                      // NORMAL düğüm -> içine in
-    for (const k of Object.keys(node)) out[k] = resolve((node as any)[k]);
+    const out: any = {};                                               // NORMAL düğüm -> içine in
+    for (const k of Object.keys(node)) out[k] = resolve(node[k]);
     return out;
   };
   return resolve(cfg);

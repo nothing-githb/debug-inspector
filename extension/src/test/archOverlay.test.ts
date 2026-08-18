@@ -130,3 +130,39 @@ test('gerçekçi callstack: ppc/x86 tam senaryo', () => {
   assert.match(x.fields[1].expr, /unsigned long/);
   assert.ok(!('ppc' in x) && !('x86' in x));   // arch kardeşleri sızmadı
 });
+
+test('common OLMADAN tek başına ppc: arch=ppc gösterir, başka arch göstermez', () => {
+  const cfg = { cs: { ppc: { mode: 'walk', root: 'g', fields: [{ label: 'PC', expr: 'srr0' }] } } };
+  const p = applyArchOverlay(cfg, 'ppc').cs;
+  assert.equal(p.mode, 'walk');
+  assert.equal(p.fields[0].expr, 'srr0');
+  assert.ok(!('ppc' in p));                                  // arch anahtarı sızmadı, düzleşti
+  assert.equal(applyArchOverlay(cfg, 'x86').cs.mode, undefined);   // x86 bloğu yok -> bölüm yok
+  assert.equal(applyArchOverlay(cfg, 'common').cs.mode, undefined); // common yok -> bölüm yok
+});
+
+test('ppc + x86 (common yok): her arch kendi bloğunu alır', () => {
+  const cfg = { cs: {
+    ppc: { mode: 'walk',  next: '*(unsigned int*)(${expr})' },
+    x86: { mode: 'array', next: '*(unsigned long*)(${expr})' },
+  } };
+  assert.equal(applyArchOverlay(cfg, 'ppc').cs.next, '*(unsigned int*)(${expr})');
+  assert.equal(applyArchOverlay(cfg, 'x86').cs.next, '*(unsigned long*)(${expr})');
+  assert.ok(!('x86' in applyArchOverlay(cfg, 'ppc').cs));    // ppc seçiliyken x86 düştü
+  assert.equal(applyArchOverlay(cfg, 'common').cs.mode, undefined);  // common yok -> bölüm yok
+});
+
+test('arch=x86: common tabanı DA çalışır (tek başına common ve common+x86)', () => {
+  // (a) sadece common -> HER arch'ta çalışır, x86 dahil
+  const onlyCommon = { cs: { common: { mode: 'array', root: 'g', fields: [{ label: 'ID', expr: 'id' }] } } };
+  assert.equal(applyArchOverlay(onlyCommon, 'x86').cs.mode, 'array');
+  assert.equal(applyArchOverlay(onlyCommon, 'x86').cs.fields[0].expr, 'id');
+  assert.equal(applyArchOverlay(onlyCommon, 'ppc').cs.mode, 'array');   // ppc'de de
+  // (b) common + x86 -> x86 seçiliyken common TABAN + x86 üstüne eklenir
+  const both = { cs: { common: { mode: 'array', root: 'g', fields: [{ label: 'ID', expr: 'id' }] },
+                       x86: { count: 'n86' } } };
+  const r = applyArchOverlay(both, 'x86').cs;
+  assert.equal(r.mode, 'array');     // common'dan
+  assert.equal(r.root, 'g');         // common'dan
+  assert.equal(r.count, 'n86');      // x86'dan eklendi
+});

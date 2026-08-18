@@ -633,13 +633,19 @@ address at `fp+8`; PowerPC follows the back chain then a link-register save slot
 Instead of maintaining a separate config file per target, keep **one file** and let
 the extension pick the right variant at load time.
 
-**Rule:** any object that has a **`common`** key is an *overlay*. It resolves to
-`common` (the shared base) deep-merged with the block named by
-**`debugInspector.arch`**; every other arch block is dropped. Objects **without** a
-`common` key are left untouched, so existing configs are unaffected. Overlays work
-at **any level** — a whole section, or a single field. Arrays and scalars are
-**replaced**, not merged (an arch block's `fields` array overrides `common`'s
-entirely).
+**Rule:** an object is an *overlay* when it contains a **`common`** key **or** a key
+matching the active arch (**`debugInspector.arch`**). It resolves to `common` (the
+shared base, if present) deep-merged with the active arch's block (if present); every
+other arch block is dropped. `common` is **optional** — a section may carry only
+`ppc`, only `x86`, or any subset. When the active arch has no matching block **and**
+there's no `common`, the object isn't an overlay and won't produce a section. Objects
+with neither `common` nor the active arch are left untouched, so existing configs are
+unaffected. Overlays work at **any level** — a whole section, or a single field.
+Arrays and scalars are **replaced**, not merged (an arch block's `fields` array
+overrides `common`'s entirely).
+
+`common` is always the **base** and applies under every arch: with `arch=x86`, a
+section that has only `common` still shows, and a `common` + `x86` section merges both.
 
 ```jsonc
 {
@@ -664,11 +670,24 @@ Set `"debugInspector.arch": "ppc"` in your `settings.json` → the PPC variant i
 `"x86"` → the x86 variant; unset (or `"common"`) → only the shared base. Changing the
 setting re-resolves the config live.
 
+You don't need all three blocks. A section can be **arch-only** (shows just for that
+arch):
+
+```jsonc
+{ "threads": { "ppc": { "mode": "array", "root": "g_threads", "count": "g_thread_count",
+                        "access": ".", "fields": [ { "label": "ID", "expr": "id" } ] } } }
+```
+
+With `arch=ppc` this `threads` shows; with any other arch it's absent (no `common`, no
+matching block). Add an `x86` block beside it to cover x86 too, or a `common` block for
+the parts they share.
+
 Notes:
-- Put **everything shared inside `common`** — a sibling of `common` that isn't the
-  active arch is dropped, so shared keys (`mode`, `fields`, …) belong *in* `common`,
-  not next to it.
-- `common` is a **reserved key** at every level — don't name a section `common`.
+- Inside an overlay object, only `common` + the active arch survive; **other siblings
+  are dropped**. So keep each block self-contained (put `mode`, `fields`, … inside the
+  block), and don't mix loose keys next to `common`/`ppc`/`x86`.
+- `common` and the arch names (`ppc`, `x86`, …) are **reserved keys** at every level —
+  don't name a section or field `common`/`ppc`/`x86`.
 
 ## Commands
 

@@ -2,7 +2,7 @@
   "name": "debug-inspector",
   "displayName": "Debug Inspector",
   "description": "Visualize your own C/C++ data structures — threads, semaphores, mutexes, queues, linked lists, any struct collection — as live, sortable tables while debugging with GDB. Config-driven and read-only.",
-  "version": "0.93.0",
+  "version": "0.94.0",
   "publisher": "halistahasahin",
   "license": "MIT",
   "icon": "icon.png",
@@ -133,7 +133,7 @@
         "debugInspector.arch": {
           "type": "string",
           "default": "common",
-          "description": "Active architecture overlay. In config sections/fields that carry a 'common' key, the 'common' base is merged with this arch's block (e.g. 'ppc', 'x86', 'arm'); blocks for other archs are ignored. Default 'common' = base only. Lets one config file serve multiple targets (e.g. platform-specific call-stack 'walk' expressions)."
+          "description": "Active architecture overlay. A section/field that contains a 'common' key OR a key matching this arch (e.g. 'ppc', 'x86', 'arm') is resolved to 'common' (if present) merged with the active arch's block; other arch blocks are dropped. 'common' is optional — a section may carry only 'ppc', only 'x86', or any subset, and 'common' applies under every arch. Default 'common' = base only. Lets one config file serve multiple targets (e.g. per-ABI call-stack 'walk' expressions)."
         }
       }
     }
