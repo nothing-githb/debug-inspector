@@ -2,6 +2,27 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.94.0] - 2026-08-18
+
+### Changed
+- **Per-architecture overlays now trigger on `common` OR the active arch, and `common` is optional.**
+  Previously a section had to carry a `common` key to be treated as an overlay; now a section may carry
+  only `ppc`, only `x86`, or any subset. An object is an overlay when it contains `common` **or** a key
+  matching **`debugInspector.arch`**; it resolves to `common` (if present) deep-merged with the active
+  arch's block, and other arch blocks are dropped. `common` stays the base and applies under **every**
+  arch (with `arch=x86`, a `common`-only section still shows, and `common` + `x86` merge). When the
+  active arch has no block and there is no `common`, the section is absent.
+
+## [0.93.0] - 2026-08-18
+
+### Added
+- **Per-architecture config overlays (`debugInspector.arch` + `common`).** A single config file can
+  serve multiple targets. Any object carrying a **`common`** key is treated as an *overlay*: it resolves
+  to `common` (the shared base) deep-merged with the block named by the new **`debugInspector.arch`**
+  setting (e.g. `ppc`, `x86`, `arm`); blocks for other archs are dropped. Overlays work at any level
+  (section or field); arrays/scalars are replaced rather than merged. Default `arch` is `common`.
+  (Refined in 0.94.0 so `common` is optional and arch-only sections work.)
+
 ## [0.92.0] - 2026-07-17
 
 ### Added

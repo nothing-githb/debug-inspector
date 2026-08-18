@@ -623,6 +623,71 @@ Any `fields` entry can carry these — one example each:
 | `debugInspector.configPath`  | `debug-inspector.json`   | Path to the config file. **Absolute paths are used as-is** (work even with no workspace folder); a **relative path resolves against the workspace root**. Changing it re-creates the file watcher. |
 | `debugInspector.logLevel`    | `info`                  | Output channel verbosity: `off` / `info` / `debug`. Applied live on change. |
 | `debugInspector.debugTypes`  | `["cppdbg"]`            | Debug adapter types the tracker attaches to. Use `cppdbg` for GDB. |
+| `debugInspector.arch`        | `common`                | Active **architecture overlay**. In sections/fields that carry a `common` key, `common` is merged with this arch's block (e.g. `ppc`, `x86`, `arm`); other arch blocks are ignored. `common` (default) = base only. Applied live on change. See *Per-architecture overlays* below. |
+
+## Per-architecture overlays (`common` + `arch`)
+
+Some traversals need **platform-specific expressions** — most commonly a call-stack
+`walk`, where the frame-pointer math differs per ABI (x86-64 reads the return
+address at `fp+8`; PowerPC follows the back chain then a link-register save slot).
+Instead of maintaining a separate config file per target, keep **one file** and let
+the extension pick the right variant at load time.
+
+**Rule:** an object is an *overlay* when it contains a **`common`** key **or** a key
+matching the active arch (**`debugInspector.arch`**). It resolves to `common` (the
+shared base, if present) deep-merged with the active arch's block (if present); every
+other arch block is dropped. `common` is **optional** — a section may carry only
+`ppc`, only `x86`, or any subset. When the active arch has no matching block **and**
+there's no `common`, the object isn't an overlay and won't produce a section. Objects
+with neither `common` nor the active arch are left untouched, so existing configs are
+unaffected. Overlays work at **any level** — a whole section, or a single field.
+Arrays and scalars are **replaced**, not merged (an arch block's `fields` array
+overrides `common`'s entirely).
+
+`common` is always the **base** and applies under every arch: with `arch=x86`, a
+section that has only `common` still shows, and a `common` + `x86` section merges both.
+
+```jsonc
+{
+  "callstack": {
+    "common": {
+      "mode": "walk", "selectedFrom": "threads", "max": 32,
+      "while": "(${expr}) != 0",
+      "fields": [
+        { "label": "SP", "expr": "${expr}", "base": "hex" },
+        { "common": { "label": "PC", "symbol": true, "base": "hex" },
+          "ppc": { "expr": "*(unsigned int*)((*(unsigned int*)(${expr}))+4)" },
+          "x86": { "expr": "*(unsigned long*)((${expr})+8)" } }
+      ]
+    },
+    "ppc": { "start": "(unsigned int)(${selected}->sp)",  "next": "*(unsigned int*)(${expr})" },
+    "x86": { "start": "(unsigned long)(${selected}->sp)", "next": "*(unsigned long*)(${expr})" }
+  }
+}
+```
+
+Set `"debugInspector.arch": "ppc"` in your `settings.json` → the PPC variant is used;
+`"x86"` → the x86 variant; unset (or `"common"`) → only the shared base. Changing the
+setting re-resolves the config live.
+
+You don't need all three blocks. A section can be **arch-only** (shows just for that
+arch):
+
+```jsonc
+{ "threads": { "ppc": { "mode": "array", "root": "g_threads", "count": "g_thread_count",
+                        "access": ".", "fields": [ { "label": "ID", "expr": "id" } ] } } }
+```
+
+With `arch=ppc` this `threads` shows; with any other arch it's absent (no `common`, no
+matching block). Add an `x86` block beside it to cover x86 too, or a `common` block for
+the parts they share.
+
+Notes:
+- Inside an overlay object, only `common` + the active arch survive; **other siblings
+  are dropped**. So keep each block self-contained (put `mode`, `fields`, … inside the
+  block), and don't mix loose keys next to `common`/`ppc`/`x86`.
+- `common` and the arch names (`ppc`, `x86`, …) are **reserved keys** at every level —
+  don't name a section or field `common`/`ppc`/`x86`.
 
 ## Commands
 

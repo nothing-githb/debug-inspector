@@ -2,7 +2,7 @@
   "name": "debug-inspector",
   "displayName": "Debug Inspector",
   "description": "Visualize your own C/C++ data structures — threads, semaphores, mutexes, queues, linked lists, any struct collection — as live, sortable tables while debugging with GDB. Config-driven and read-only.",
-  "version": "0.92.0",
+  "version": "0.94.0",
   "publisher": "halistahasahin",
   "license": "MIT",
   "icon": "icon.png",
@@ -129,6 +129,11 @@
           "type": "number",
           "default": 2,
           "description": "How many watchpoints may use hardware debug registers. Beyond this — and for any pointer-dereferencing expression (which GDB watches along its whole access path, using several registers) — new watchpoints are created as (slower) software watchpoints, so resuming doesn't fail with 'Couldn't insert hardware watchpoints: too many'. x86 has 4 registers but a single linked/grouped (->) watchpoint can consume several. Set higher for targets with more registers, or 0 to always use software."
+        },
+        "debugInspector.arch": {
+          "type": "string",
+          "default": "common",
+          "description": "Active architecture overlay. A section/field that contains a 'common' key OR a key matching this arch (e.g. 'ppc', 'x86', 'arm') is resolved to 'common' (if present) merged with the active arch's block; other arch blocks are dropped. 'common' is optional — a section may carry only 'ppc', only 'x86', or any subset, and 'common' applies under every arch. Default 'common' = base only. Lets one config file serve multiple targets (e.g. per-ABI call-stack 'walk' expressions)."
         }
       }
     }
@@ -137,7 +142,10 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package --out ../dist/"
+    "pretest": "npm run compile",
+    "test": "node --test out/test/archOverlay.test.js",
+    "prepackage": "node -e \"require('fs').mkdirSync('../dist',{recursive:true})\"",
+    "package": "vsce package --out ../dist"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
