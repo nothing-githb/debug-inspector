@@ -144,7 +144,8 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node --test out/test/archOverlay.test.js",
-    "package": "vsce package --out ../dist/"
+    "prepackage": "node -e \"require('fs').mkdirSync('../dist',{recursive:true})\"",
+    "package": "vsce package --out ../dist"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
