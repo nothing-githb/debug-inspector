@@ -27,7 +27,7 @@ function deepMerge(base: any, over: any): any {
 }
 
 // cfg içindeki tüm overlay'leri aktif arch'a göre çöz. arch boş/verilmezse 'common' (yalnız taban).
-export function applyArchOverlay<T = any>(cfg: T, arch?: string): T {
+export function applyArchOverlay(cfg: any, arch?: string): any {
   const active = ((arch ?? '').trim()) || ARCH_DEFAULT;
   const resolve = (node: any): any => {
     if (Array.isArray(node)) return node.map(resolve);
@@ -42,5 +42,5 @@ export function applyArchOverlay<T = any>(cfg: T, arch?: string): T {
     for (const k of Object.keys(node)) out[k] = resolve((node as any)[k]);
     return out;
   };
-  return resolve(cfg) as T;
+  return resolve(cfg);
 }
