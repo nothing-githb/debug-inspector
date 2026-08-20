@@ -50,3 +50,46 @@ export function applyArchOverlay(cfg: any, arch?: string): any {
   };
   return resolve(cfg);
 }
+
+// Debug Inspector şema anahtarları (section + field + level + timeline). Bir OVERLAY nesnesinde
+// bu listede OLMAYAN, değeri nesne olan anahtar = arch etiketi. Şemayı büyütürsen buraya ekle,
+// yoksa yeni anahtar yanlışlıkla "arch" sanılır.
+const SCHEMA_KEYS = new Set<string>([
+  // section
+  'mode', 'root', 'levels', 'timeline', 'children', 'next', 'start', 'while', 'head', 'nil',
+  'count', 'access', 'cast', 'wrap', 'label', 'groupBy', 'selectedFrom', 'hidden', 'max', 'fields',
+  // field
+  'expr', 'when', 'base', 'bar', 'link', 'badge', 'valueMap', 'flags', 'symbol', 'sourceLine',
+  'editable',
+  // level (nested_array)
+  'name', 'array',
+]);
+
+// Config'te TANIMLI arch etiketlerini bul (panelin arch seçicisi bunu listeler).
+//
+// 'common' DÖNMEZ — o taban, seçicide her zaman ilk seçenek olarak ayrıca sunulur.
+//
+// Yalnız overlay barındırabilen yerlere inilir: bölüm gövdeleri, 'fields' / 'levels' öğeleri ve
+// common/arch bloklarının içi. 'valueMap' / 'badge' / 'flags' / 'bar' / 'link' gibi anahtarların
+// İÇİNE İNİLMEZ: onların değerleri de nesne olabilir (örn valueMap {"0": {text,color}}) ve
+// "0" gibi uyduruk arch'lar bulunurdu.
+export function discoverArchs(cfg: any): string[] {
+  const found = new Set<string>();
+  const visit = (node: any, depth: number): void => {
+    if (!isObj(node) || depth > 12) return;
+    for (const k of Object.keys(node)) {
+      const v = (node as any)[k];
+      if (k.startsWith('//')) continue;                 // yorum anahtarı
+      if (k === 'common') { visit(v, depth + 1); continue; }   // taban -> içine in
+      if (k === 'fields' || k === 'levels') {           // dizi: her öğe section/field-benzeri
+        if (Array.isArray(v)) for (const it of v) visit(it, depth + 1);
+        continue;
+      }
+      if (SCHEMA_KEYS.has(k)) continue;                 // bilinen şema anahtarı -> arch değil
+      if (isObj(v)) { found.add(k); visit(v, depth + 1); }     // arch etiketi + içine in
+    }
+  };
+  // ÜST DÜZEY: anahtarlar bölüm ADLARIdır (arch değil) -> adı atla, gövdesini gez.
+  if (isObj(cfg)) for (const k of Object.keys(cfg)) if (!k.startsWith('//')) visit((cfg as any)[k], 0);
+  return [...found].sort();
+}

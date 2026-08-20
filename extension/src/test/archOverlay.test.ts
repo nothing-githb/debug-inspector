@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { applyArchOverlay, ARCH_DEFAULT } from '../archOverlay';
+import { applyArchOverlay, ARCH_DEFAULT, discoverArchs } from '../archOverlay';
 
 test('common yoksa config aynen döner (geriye dönük uyumlu)', () => {
   const cfg = { timers: { mode: 'array', root: 'g_timers', count: '4', fields: [{ label: 'ID', expr: 'id' }] } };
@@ -165,4 +165,65 @@ test('arch=x86: common tabanı DA çalışır (tek başına common ve common+x86
   assert.equal(r.mode, 'array');     // common'dan
   assert.equal(r.root, 'g');         // common'dan
   assert.equal(r.count, 'n86');      // x86'dan eklendi
+});
+
+// --- discoverArchs: panelin arch seçicisini besleyen keşif ---
+
+test('discoverArchs: bölüm ve field seviyesindeki arch etiketlerini bulur, common dönmez', () => {
+  const cfg = {
+    '//': 'yorum',
+    threads: {
+      common: { mode: 'array', fields: [
+        { label: 'ID', expr: 'id' },
+        { common: { label: 'PC' }, ppc: { expr: 'srr0' }, arm: { expr: 'lr' } },
+      ] },
+      ppc: { root: 'g_ppc' },
+      x86: { root: 'g_x86' },
+    },
+    timers: { mode: 'array', root: 'g_timers', fields: [{ label: 'ID', expr: 'id' }] },
+  };
+  assert.deepEqual(discoverArchs(cfg), ['arm', 'ppc', 'x86']);   // sıralı, tekilleştirilmiş, common yok
+});
+
+test('discoverArchs: arch bloğu olmayan config -> boş dizi (seçici gizlenir)', () => {
+  const cfg = { timers: { mode: 'array', root: 'g', count: 'n', access: '.',
+                          fields: [{ label: 'ID', expr: 'id' }] } };
+  assert.deepEqual(discoverArchs(cfg), []);
+});
+
+test('discoverArchs: common OLMADAN tek arch da bulunur', () => {
+  const cfg = { threads: { ppc: { mode: 'array', root: 'g', fields: [{ label: 'ID', expr: 'id' }] } } };
+  assert.deepEqual(discoverArchs(cfg), ['ppc']);
+});
+
+test('discoverArchs: valueMap/badge/flags/bar/link İÇİNE İNMEZ (uyduruk arch üretmez)', () => {
+  const cfg = { t: { mode: 'array', root: 'g', fields: [
+    // valueMap değerleri NESNE ("0": {text,color}) -> içine inilirse "0"/"1" arch sanılırdı
+    { label: 'Locked', expr: 'locked', valueMap: { '0': { text: 'free', color: 'green' },
+                                                   '1': { text: 'HELD', color: '#e74c3c' } } },
+    { label: 'Flags', expr: 'flags', flags: { '0x1': { text: 'BUSY', color: 'amber' } } },
+    { label: 'State', expr: 'state', badge: { RUNNING: 'green' } },
+    { label: 'Stack', expr: 'used', bar: { max: 'size', warn: 75, crit: 90 } },
+    { label: 'Owner', expr: 'owner', link: { section: 'threads', match: 'ID' } },
+  ] } };
+  assert.deepEqual(discoverArchs(cfg), []);
+});
+
+test('discoverArchs: timeline / levels şema anahtarları arch sanılmaz', () => {
+  const cfg = { s: { mode: 'nested_array',
+    timeline: { lane: 'Core', start: 'Start', width: 'Dur', total: 200,
+                set: [{ array: 'devs', count: 'ndev', label: 'name' }] },
+    levels: [ { name: 'core', array: 'g_sched', count: 'n', access: '.' },
+              { name: 'win', array: 'wins', count: 'nwins', access: '.' } ],
+    fields: [{ label: 'Part', expr: 'part' }] } };
+  assert.deepEqual(discoverArchs(cfg), []);
+});
+
+test('discoverArchs: keşfedilen etiketler applyArchOverlay ile tutarlı', () => {
+  const cfg = { cs: { common: { mode: 'walk' }, ppc: { next: 'p' }, x86: { next: 'x' } } };
+  for (const a of discoverArchs(cfg)) {
+    const out = applyArchOverlay(cfg, a).cs;
+    assert.equal(out.mode, 'walk');                 // common tabanı her arch'ta
+    assert.ok(out.next, 'arch "' + a + '" bir next üretmeli');
+  }
 });

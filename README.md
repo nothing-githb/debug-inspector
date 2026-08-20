@@ -96,6 +96,11 @@ Toggle any section to an interactive **node graph**. Linked lists and arrays flo
   menu and reorder by **dragging a tab** (or a row in the menu) — instant
   (client-side), remembered per workspace. A section can also start hidden with
   `"hidden": true` in config.
+- **Per-architecture overlays.** One config file can serve several targets: wrap the
+  platform-specific bits in `common` / `ppc` / `x86` (…any label) blocks and pick the
+  active one from the **arch** dropdown in the top bar. The picker lists the labels found
+  in your config and hides itself when there are none. Typical use: a call-stack `walk`
+  whose frame-pointer math differs per ABI.
 - **Arbitrary root expressions** — anything valid in GDB, e.g.
   `g_kernel.pools[0]->thread_list`.
 - **Generic `void*` buffers.** Reinterpret an untyped buffer as a typed array
@@ -623,7 +628,7 @@ Any `fields` entry can carry these — one example each:
 | `debugInspector.configPath`  | `debug-inspector.json`   | Path to the config file. **Absolute paths are used as-is** (work even with no workspace folder); a **relative path resolves against the workspace root**. Changing it re-creates the file watcher. |
 | `debugInspector.logLevel`    | `info`                  | Output channel verbosity: `off` / `info` / `debug`. Applied live on change. |
 | `debugInspector.debugTypes`  | `["cppdbg"]`            | Debug adapter types the tracker attaches to. Use `cppdbg` for GDB. |
-| `debugInspector.arch`        | `common`                | Active **architecture overlay**. In sections/fields that carry a `common` key, `common` is merged with this arch's block (e.g. `ppc`, `x86`, `arm`); other arch blocks are ignored. `common` (default) = base only. Applied live on change. See *Per-architecture overlays* below. |
+| `debugInspector.arch`        | `common`                | **Initial** default for the active **architecture overlay**. The panel's top-bar **arch picker** overrides it per workspace. In sections/fields that carry a `common` key *or* a key matching the active arch, `common` is merged with that arch's block; other arch blocks are ignored. See *Per-architecture overlays* below. |
 
 ## Per-architecture overlays (`common` + `arch`)
 
@@ -666,9 +671,15 @@ section that has only `common` still shows, and a `common` + `x86` section merge
 }
 ```
 
-Set `"debugInspector.arch": "ppc"` in your `settings.json` → the PPC variant is used;
-`"x86"` → the x86 variant; unset (or `"common"`) → only the shared base. Changing the
-setting re-resolves the config live.
+**Pick the arch from the panel.** The top bar shows an **arch** dropdown listing the arch labels
+found in your config, with `common` first. Choosing one re-resolves the config immediately and the
+choice is remembered per workspace. The picker is **hidden when the config defines no arch blocks**,
+so it stays out of the way if you don't use overlays.
+
+`debugInspector.arch` still works as the **initial** default (handy to commit a per-project default in
+`.vscode/settings.json`), but once you pick from the panel the picker wins and the setting is ignored.
+If a remembered pick is no longer present in the config, it falls back to `common` with a warning in
+the *Debug Inspector* output channel.
 
 You don't need all three blocks. A section can be **arch-only** (shows just for that
 arch):
