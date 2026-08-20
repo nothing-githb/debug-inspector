@@ -2,6 +2,21 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.94.1] - 2026-08-19
+
+### Added
+- **Architecture picker in the panel's top bar.** The active arch overlay is now chosen from the panel
+  instead of having to edit settings. The picker lists the arch labels **discovered in the config**
+  (`common` is always the first option) and is **hidden entirely when the config defines no arch blocks**,
+  so it never gets in the way of configs that don't use overlays. Picking an arch re-resolves the config
+  immediately and the choice is **remembered per workspace**.
+
+### Changed
+- **`debugInspector.arch` is now only the INITIAL default.** Once you pick an arch in the panel, the
+  picker wins and changes to the setting are ignored (the same `touched` rule already used for section and
+  column preferences) — a settings change while a picker choice is active is logged and skipped. A
+  persisted pick that no longer exists in the config falls back to `common` with a warning.
+
 ## [0.94.0] - 2026-08-18
 
 ### Changed

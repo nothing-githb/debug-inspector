@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { applyArchOverlay } from './archOverlay';
+import { applyArchOverlay, discoverArchs } from './archOverlay';
 
 // ---------------------------------------------------------------------------
 // Tipler
@@ -118,6 +118,24 @@ let sectionPrefs: { order: string[]; hidden: string[]; touched?: boolean } = { o
 const SECPREF_KEY = 'debugInspector.sectionPrefs';
 let paused = false;                         // duraklatılınca durakta otomatik yenileme yapılmaz
 const PAUSED_KEY = 'debugInspector.paused';
+// Arch (mimari) seçimi: panelin üst barındaki seçici. Config'te TANIMLI arch etiketleri
+// keşfedilir (discoverArchs) ve kullanıcı oradan seçer -> workspace'te hatırlanır.
+// archPref undefined = kullanıcı henüz seçmedi -> 'debugInspector.arch' ayarı (varsayılan 'common').
+// Seçim yapıldıktan sonra AYAR YOKSAYILIR (bölüm/kolon tercihlerindeki 'touched' mantığının aynısı).
+let archPref: string | undefined;
+const ARCHPREF_KEY = 'debugInspector.archPref';
+let availableArchs: string[] = [];          // config'te bulunan arch etiketleri ('common' hariç)
+
+// Etkin arch: UI seçimi > ayar > 'common'. Seçim artık config'te yoksa (dosya değişti) 'common'a düş.
+function activeArch(): string {
+  const setting = (vscode.workspace.getConfiguration('debugInspector').get<string>('arch') || '').trim();
+  const want = (archPref ?? setting ?? '').trim() || 'common';
+  if (want !== 'common' && availableArchs.length && !availableArchs.includes(want)) {
+    log?.warn(`arch "${want}" config'te tanımlı değil (bulunanlar: ${availableArchs.join(', ') || '-'}) → 'common' kullanılıyor`);
+    return 'common';
+  }
+  return want;
+}
 
 // ---------------------------------------------------------------------------
 // Aktivasyon
@@ -127,6 +145,7 @@ export function activate(context: vscode.ExtensionContext) {
   columnPrefs = context.workspaceState.get<Record<string, ColPref>>(COLPREF_KEY) ?? {};
   sectionPrefs = context.workspaceState.get<{ order: string[]; hidden: string[]; touched?: boolean }>(SECPREF_KEY) ?? { order: [], hidden: [] };
   paused = context.workspaceState.get<boolean>(PAUSED_KEY) ?? false;
+  archPref = context.workspaceState.get<string>(ARCHPREF_KEY) ?? undefined;
 
   logChannel = vscode.window.createOutputChannel('Debug Inspector', 'log'); // 'log' dili = renkli
   logThreshold = readLogLevel();
@@ -208,8 +227,17 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('debugInspector.configPath')) setupConfigWatcher(context);
       if (e.affectsConfiguration('debugInspector.arch')) {
-        log.info(`arch changed: ${vscode.workspace.getConfiguration('debugInspector').get('arch') ?? 'common'} → re-resolving config`);
-        onConfigChange();   // config semantiği değişti (yeni arch) -> veri/sunum farkına göre yenile
+        const s = vscode.workspace.getConfiguration('debugInspector').get('arch') ?? 'common';
+        if (archPref !== undefined) {
+          // Panelin arch seçicisinden seçim yapılmış -> ayar YOKSAYILIR (bölüm/kolon
+          // tercihlerindeki 'touched' mantığının aynısı). Ayar artık yalnız İLK varsayılan;
+          // değiştirmek için panelin seçicisini kullan.
+          log.info(`arch setting changed to "${s}" but the panel's arch picker ("${archPref}") wins — ignored`);
+        } else {
+          log.info(`arch changed: ${s} → re-resolving config`);
+          onConfigChange();   // config semantiği değişti (yeni arch) -> veri/sunum farkına göre yenile
+          sendArchs();
+        }
       }
       if (e.affectsConfiguration('debugInspector.logLevel')) {
         logThreshold = readLogLevel();
@@ -246,6 +274,7 @@ function onConfigChange() {
   if (!panel || !lastStopped) return;
   masterWarned.clear();   // config değişti -> ${master} uyarısı düzeltildiyse tekrar uyarma; hâlâ yanlışsa bir kez daha uyar
   const cfg = loadConfig();
+  sendArchs();   // dosya elle düzenlendi -> arch etiket listesi de değişmiş olabilir
   if (!cfg) { doRefresh(); return; }   // okunamadı/şema bozuk -> güvenli tam yenile
   const secs = extractSections(cfg);
   const fp = fingerprintOf(secs, resolveLayout(secs));
@@ -277,6 +306,11 @@ let activeTab: string | undefined;  // webview'in o anki aktif sekmesi -> refres
 let watchpoints: Record<string, number> = {};   // izlenen l-value ifadesi -> GDB watchpoint no (★ işareti + kaldırma için)
 let wpCounter = 0;                               // her watchpoint'e benzersiz convenience var ($di_wp<N>) için sayaç
 function sendWatchpoints() { panel?.webview.postMessage({ type: 'watchpoints', exprs: Object.keys(watchpoints) }); }
+// Arch seçicisini besle: config'te bulunan etiketler + o an etkin olan. Config dosyası
+// değişince etiket listesi de değişebileceği için her yenilemede/değişimde gönderilir.
+function sendArchs() {
+  panel?.webview.postMessage({ type: 'archs', archs: availableArchs, active: activeArch() });
+}
 // GDB watchpoint numarasını 'info watchpoints'tan bul (cppdbg 'watch' çıktısında numarayı her zaman echo'lamaz).
 // Önce 'What' sütunu expr ile eşleşen satır; yoksa en yüksek numara (en son eklenen).
 async function findWatchNum(session: vscode.DebugSession, frameId: number | undefined, expr: string): Promise<number> {
@@ -861,11 +895,15 @@ function loadConfig(): SyncCfg | undefined {
   if (!file) return undefined;
   try {
     const text = fs.readFileSync(file, 'utf8');
-    // Arch overlay: 'common' + aktif arch (debugInspector.arch, varsayılan "common") çözülür.
-    // Sonuç DÜZ config -> extractSections ve gerisi hiç değişmeden çalışır.
-    const arch = vscode.workspace.getConfiguration('debugInspector').get<string>('arch') || 'common';
-    log?.debug(`config loaded: ${file} (arch="${arch}")`);
-    return applyArchOverlay(JSON.parse(text) as SyncCfg, arch);
+    const raw = JSON.parse(text) as SyncCfg;
+    // HAM config'ten arch etiketlerini keşfet (panelin arch seçicisi bunu listeler) — çözümden
+    // ÖNCE yapılmalı, çünkü çözüm aktif olmayan arch bloklarını düşürür.
+    availableArchs = discoverArchs(raw);
+    // Arch overlay: 'common' + etkin arch çözülür. Sonuç DÜZ config -> extractSections ve
+    // gerisi hiç değişmeden çalışır.
+    const arch = activeArch();
+    log?.debug(`config loaded: ${file} (arch="${arch}", available=[${availableArchs.join(', ') || '-'}])`);
+    return applyArchOverlay(raw, arch);
   } catch (e: any) {
     log?.warn(`could not read/parse config: ${file} — ${e?.message ?? e}`);
     vscode.window.showWarningMessage(`Debug Inspector: could not read config (${file})`);
@@ -1716,6 +1754,7 @@ async function refresh(session: vscode.DebugSession, threadId: number, gen?: num
   if (stale()) return;
   panel.webview.postMessage({ type: 'beginUpdate', order, visible, hiddenSections: order.filter(n => hiddenSet.has(n)), details: detailMap, ts });
   sendWatchpoints();   // webview izlenen hücreleri ★ ile işaretlesin (yenileme sonrası da korunur)
+  sendArchs();         // arch seçicisi: config'te bulunan etiketler + etkin olan
 
   // master cache (grouped bölümlerin bağımlılığı); görünür bir master kurulunca hemen gönderilir
   const masters: Record<string, { sec: Section; selExprs: string[]; cfg: SectionCfg }> = {};
@@ -1792,7 +1831,27 @@ function openPanel(context: vscode.ExtensionContext) {
   panel.webview.onDidReceiveMessage(
     async (msg: any) => {
       if (msg?.type === 'refresh') { log?.debug('webview: manual refresh'); doRefresh(); return; }
-      if (msg?.type === 'ready') { log?.debug('webview: ready (load/move) — resend data if stopped'); openDetails = []; if (lastStopped) doRefresh(); return; }
+      if (msg?.type === 'ready') {
+        log?.debug('webview: ready (load/move) — resend data if stopped');
+        openDetails = [];
+        // Arch seçicisini HEMEN doldur: debugger durmamışsa hiç refresh olmaz, o yüzden
+        // config'i burada okuyup etiket listesini gönderiyoruz (yoksa seçici boş kalırdı).
+        loadConfig();
+        sendArchs();
+        if (lastStopped) doRefresh();
+        return;
+      }
+      if (msg?.type === 'setArch' && typeof msg.arch === 'string') {
+        const want = msg.arch.trim() || 'common';
+        archPref = want;
+        log?.info(`webview: arch → "${want}"`);
+        extContext?.workspaceState.update(ARCHPREF_KEY, archPref);
+        // Config'in ANLAMI değişti (farklı overlay çözümü) -> veri/sunum farkına göre yenile.
+        // Debugger durmamışsa onConfigChange erken döner; seçici zaten güncel, sonraki durakta uygulanır.
+        onConfigChange();
+        sendArchs();
+        return;
+      }
       if (msg?.type === 'openConfig') { log?.debug('webview: open config'); vscode.commands.executeCommand('debugInspector.openConfig'); return; }
       if (msg?.type === 'openDetail' && typeof msg.master === 'string' && typeof msg.sel === 'string' && typeof msg.section === 'string') {
         // master satırı sağ-tık -> "Show detailed info": detayı kaydet (her durakta tazelenecek) + hemen bir kez çek
@@ -2014,6 +2073,11 @@ function getHtml(): string {
     color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
   }
   .btn:hover { background: var(--vscode-list-hoverBackground); }
+
+  /* arch seçici: üst barda 'arch' etiketi + açılır liste. Config'te arch bloğu yoksa gizli. */
+  .archwrap { display: inline-flex; align-items: center; gap: 4px; }
+  .archlbl { font-size: 10px; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.4px; }
+  .archsel { padding: 3px 6px; max-width: 140px; }
 
   .cols-menu {
     position: fixed; z-index: 50; min-width: 210px;
@@ -2354,6 +2418,7 @@ function getHtml(): string {
     <span id="changes" class="pill chg hidden"></span>
     <span class="grow"></span>
     <span id="ts" class="ts"></span>
+    <span id="arch-wrap" class="archwrap hidden"><span class="archlbl">arch</span><select id="arch-sel" class="btn archsel" title="Active architecture overlay — resolves 'common' + this arch in the config. Only shown when the config defines arch blocks."></select></span>
     <button id="config-btn" class="btn" title="Open the config file (debug-inspector.json)">⚙ Config</button>
     <button id="sections-btn" class="btn" title="Show / hide sections (tabs)">▤ Sections</button>
     <button id="export-btn" class="btn" title="Export all sections' data as JSON">⤓ JSON</button>
@@ -4624,6 +4689,26 @@ function getHtml(): string {
     e.stopPropagation();
     vscodeApi.postMessage({ type: 'openConfig' });
   });
+
+  // --- arch seçici: config'te bulunan arch etiketleri ('common' her zaman ilk sırada) ---
+  // Etiket listesi extension'dan 'archs' mesajıyla gelir (ready + her yenileme + config değişimi).
+  // Config'te hiç arch bloğu yoksa seçici GİZLİ kalır (overlay kullanmayan kullanıcıyı meşgul etmez).
+  const archWrap = document.getElementById('arch-wrap');
+  const archSel = document.getElementById('arch-sel');
+  function renderArchs(archs, active) {
+    if (!archWrap || !archSel) return;
+    if (!archs.length) { archWrap.classList.add('hidden'); return; }
+    const opts = ['common'].concat(archs.filter(a => a !== 'common'));
+    const cur = opts.indexOf(active) === -1 ? 'common' : active;
+    archSel.innerHTML = opts.map(a =>
+      '<option value="' + esc(a) + '"' + (a === cur ? ' selected' : '') + '>' + esc(a) + '</option>').join('');
+    archSel.value = cur;
+    archWrap.classList.remove('hidden');
+  }
+  if (archSel) archSel.addEventListener('change', e => {
+    e.stopPropagation();
+    vscodeApi.postMessage({ type: 'setArch', arch: archSel.value });
+  });
   secMenu.addEventListener('change', e => {
     const cb = e.target.closest('input[data-act="secvis"]');
     if (!cb) return;
@@ -4731,6 +4816,8 @@ function getHtml(): string {
       const chEl = document.getElementById('changes');
       if (changed > 0) { chEl.textContent = changed + ' changed'; chEl.classList.remove('hidden'); }
       else chEl.classList.add('hidden');
+    } else if (m.type === 'archs') {
+      renderArchs(Array.isArray(m.archs) ? m.archs : [], typeof m.active === 'string' ? m.active : 'common');
     } else if (m.type === 'watchpoints') {
       watchedExprs = new Set(Array.isArray(m.exprs) ? m.exprs : []);   // izlenen l-value'lar -> ★ + menü Add/Remove
       for (const n of currentNames) if (secState[n] && secState[n].sec) paint(n);
