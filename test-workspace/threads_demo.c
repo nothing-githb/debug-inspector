@@ -219,6 +219,40 @@ bnode_t  g_bnodes[16];
 int      g_bnode_count = 0;
 bnode_t *g_tree_root;                      /* binary search tree (tree mode demo) */
 
+/* --- UNION demosu (variant detay): her nesne ya bir HEAP TREE ya da bir DLL (cift yonlu bagli liste) tasir.
+   Hangi uyenin gecerli oldugunu 'kind' soyler. Config'te objContent detayi 'variant': case'lerin 'when' kosulu
+   (${selected}.kind == OBJ_HEAP / OBJ_DLL) hangi gezinmenin (tree / linked_list) kullanilacagini secer.
+   Statik init (kod gerekmez): dugum dizileri kendi elemanlarina isaret eder. --- */
+typedef enum { OBJ_HEAP = 1, OBJ_DLL = 2 } obj_kind_t;
+typedef struct hnode { int key; const char *label; struct hnode *left, *right; } hnode_t;   /* min-heap dugumu */
+typedef struct dnode { int key; const char *label; struct dnode *prev, *next; } dnode_t;   /* dll dugumu */
+typedef struct {
+    const char *name;
+    obj_kind_t  kind;                       /* union'in hangi uyesi gecerli */
+    union {
+        struct { hnode_t *root; int count; } heap;
+        struct { dnode_t *head; dnode_t *tail; int count; } dll;
+    } u;
+} obj_t;
+/* heap dizilimi klasik: i'nin cocuklari 2i+1 / 2i+2 (min-heap: her ebeveyn cocuklarindan kucuk) */
+static hnode_t g_heap_timers[7] = {
+    { 1, "tick",  &g_heap_timers[1], &g_heap_timers[2] },
+    { 3, "net",   &g_heap_timers[3], &g_heap_timers[4] },
+    { 2, "disk",  &g_heap_timers[5], &g_heap_timers[6] },
+    { 7, "ui",    0, 0 }, { 4, "gc", 0, 0 }, { 5, "log", 0, 0 }, { 6, "ipc", 0, 0 } };
+static hnode_t g_heap_events[3] = {
+    { 10, "boot", &g_heap_events[1], &g_heap_events[2] }, { 20, "link", 0, 0 }, { 15, "sync", 0, 0 } };
+static dnode_t g_dll_rx[4] = {
+    { 100, "pkt0", 0,            &g_dll_rx[1] }, { 101, "pkt1", &g_dll_rx[0], &g_dll_rx[2] },
+    { 102, "pkt2", &g_dll_rx[1], &g_dll_rx[3] }, { 103, "pkt3", &g_dll_rx[2], 0 } };
+static dnode_t g_dll_free[2] = { { 200, "blk0", 0, &g_dll_free[1] }, { 201, "blk1", &g_dll_free[0], 0 } };
+obj_t g_objs[4] = {
+    { "timers", OBJ_HEAP, { .heap = { g_heap_timers, 7 } } },
+    { "rxq",    OBJ_DLL,  { .dll  = { g_dll_rx, &g_dll_rx[3], 4 } } },
+    { "events", OBJ_HEAP, { .heap = { g_heap_events, 3 } } },
+    { "freeq",  OBJ_DLL,  { .dll  = { g_dll_free, &g_dll_free[1], 2 } } } };
+int g_obj_count = 4;
+
 /* libc yok -> isimler literal havuzundan döngüsel seçilir */
 static const char *NAMES[]  = { "main","worker","logger","net","disk","audio","video","sensor","timer","gc","ui","ipc" };
 #define NN  ((int)(sizeof(NAMES)/sizeof(NAMES[0])))

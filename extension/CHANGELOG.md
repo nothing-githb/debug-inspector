@@ -2,6 +2,42 @@
 
 All notable changes to the **Debug Inspector** extension are documented here.
 
+## [0.95.2] - 2026-10-23
+
+### Changed
+- **Tree detail indent guides show the exact depth.** A level whose branch has ended now shows a faint `┊`
+  instead of a blank, so every row has exactly as many marks as its depth (a depth-2 node under the last
+  child no longer looks like depth 1). Each level is a fixed-width cell, so rows of the same depth line
+  up in any editor font.
+
+### Fixed
+- **Tree detail guides were right-aligned with a numeric key column.** The guides then hugged the number,
+  so a parent's and its child's connectors fell on the same x and the depth read wrong. The guide column
+  is now always left-aligned.
+
+## [0.95.1] - 2026-10-23
+
+### Added
+- **Tree child side next to depth.** In `tree` mode a field whose `expr` is exactly `${depth}` shows the
+  child field the node was reached through, e.g. `1 · left`, `2 · right` (root: only `0`), in the table,
+  in details and on graph cards. A lone left or right child is now clear. The value stays the plain number,
+  so sorting and number bases are unchanged.
+
+## [0.95.0] - 2026-10-23
+
+### Added
+- **`variant` mode for unions (tagged variants).** A section lists complete section bodies in `cases`, each
+  with a `when` condition you write (a GDB expression; `${selected}` in details). The first true case is
+  used, a case without `when` is the else, and the chosen case brings its own `mode` and `fields` (e.g. a
+  heap member walked as `tree`, a list member as `linked_list`). A `when` that GDB cannot evaluate counts
+  as false; when no case matches, the section/detail shows an explicit message. Cases may nest. Works in
+  plain sections and `selectedFrom` details; `variant` + `groupBy` reports a clear "not supported yet".
+- **`field.detail` trigger.** `"detail": "<detail section>"` makes a cell clickable: one click opens that
+  `selectedFrom` detail for the row (same as right-click → Show … (detail)), a second click closes it.
+- **Tree details are shown hierarchically.** A `tree`-kind detail is listed depth-first with `├─` / `└─`
+  indent guides in its first column, so the whole tree reads at a glance.
+- Demo: `obj_t` union (heap tree or dll) in `threads_demo.c` + `objects` / `objContent` in the demo config.
+
 ## [0.94.1] - 2026-08-19
 
 ### Added

@@ -145,7 +145,52 @@
     ]
   },
 
-  "//procSlots": "grouped + index_list birlikte: her process'in g_slot_pool içindeki index-zinciri. head ${master}->slot_head ile o process'e göre başlar; processes altında ağaç. 'next' burada wrap-benzeri ${expr} şablonu (elem.next) ile yazılmıştır.",
+  "//objects": "UNION ornegi: her obj_t ya HEAP TREE (u.heap) ya da DLL (u.dll) tasir; hangisi oldugu 'kind' alaninda. 'Content' alani 'detail':'objContent' ile TIKLANABILIR: hucreye tiklayinca o nesnenin TUM yapisi satirin altinda acilir (heap ise girintili agac, dll ise zincir sirasiyla), tekrar tiklayinca kapanir. Sag-tik 'Show ObjContent (detail)' de ayni.",
+  "objects": {
+    "mode": "array",
+    "root": "g_objs",
+    "count": "g_obj_count",
+    "access": ".",
+    "label": "name",
+    "fields": [
+      { "label": "Name",    "expr": "name" },
+      { "label": "Kind",    "expr": "kind", "valueMap": { "OBJ_HEAP": { "text": "heap tree", "color": "green" }, "OBJ_DLL": { "text": "dll", "color": "blue" } } },
+      { "label": "Content", "expr": "${expr}.kind == OBJ_HEAP ? ${expr}.u.heap.count : ${expr}.u.dll.count", "detail": "objContent" }
+    ]
+  },
+
+  "//objContent": "VARIANT DETAY (selectedFrom + mode 'variant'): 'cases' SIRAYLA denenir, 'when' kosulu DOGRU cikan ILK case secilir ('when' yazilmamis case = else). Kosulu SEN yazarsin: GDB'ye oldugu gibi gider (${selected} = secilen nesne). Uzanti union'in tipini bilmez; secilen case kendi modunu (tree / linked_list / ...) ve alanlarini getirir. Case yine 'variant' olabilir (ic ice union).",
+  "objContent": {
+    "selectedFrom": "objects",
+    "mode": "variant",
+    "cases": [
+      {
+        "when": "${selected}.kind == OBJ_HEAP",
+        "mode": "tree",
+        "root": "${selected}.u.heap.root",
+        "children": ["left", "right"],
+        "fields": [
+          { "label": "Key",   "expr": "key" },
+          { "label": "Label", "expr": "label" },
+          { "label": "Depth", "expr": "${depth}" }
+        ]
+      },
+      {
+        "when": "${selected}.kind == OBJ_DLL",
+        "mode": "linked_list",
+        "root": "${selected}.u.dll.head",
+        "next": "next",
+        "fields": [
+          { "label": "Key",   "expr": "key" },
+          { "label": "Label", "expr": "label" },
+          { "label": "Prev",  "expr": "prev", "base": "hex" },
+          { "label": "Next",  "expr": "next", "base": "hex" }
+        ]
+      }
+    ]
+  },
+
+  "//procSlots":"grouped + index_list birlikte: her process'in g_slot_pool içindeki index-zinciri. head ${master}->slot_head ile o process'e göre başlar; processes altında ağaç. 'next' burada wrap-benzeri ${expr} şablonu (elem.next) ile yazılmıştır.",
   "procSlots": {
     "groupBy": "processes",
     "mode": "index_list",

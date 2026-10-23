@@ -87,6 +87,12 @@ Toggle any section to an interactive **node graph**. Linked lists and arrays flo
 - **Conditional fields.** A field with `"when"` only shows when its condition holds
   (else the cell is blank) — combine several on one discriminator for
   **tagged‑union / variant** rows (e.g. `Owner` when locked, else `Waiting`).
+- **Unions (`variant`).** When an object holds a union (say a heap tree *or* a
+  linked list), list one section body per member in `cases`, each with a `when`
+  condition you write; the first true case decides how the object is walked.
+  A field with `"detail"` opens that detail when you click its cell; a tree detail
+  shows the whole tree with per-level indent guides, and `${depth}` cells name the
+  child side (`2 · right`).
 - **Edit values (opt-in).** Mark a field `"editable": true`, then right-click a
   cell → **Edit value…** to write it in the running program (GDB `set var`).
   Read-only otherwise; any cell can also be copied.
@@ -198,7 +204,7 @@ finishes, so large/grouped sections stay responsive.
 
 The config file (default `debug-inspector.json`) is a **JSON map of named
 sections**. Each key whose value is an object with a string `mode` and an array
-`fields` is a section; the key is its tab label. **Keys starting with `//` are
+`fields` (or, for `"mode": "variant"`, an array `cases`) is a section; the key is its tab label. **Keys starting with `//` are
 ignored** (handy for inline notes). Section order is preserved and drives tab
 order.
 
@@ -208,10 +214,10 @@ Every field, across all modes:
 
 | Field     | Modes | Default | Meaning |
 |-----------|-------|---------|---------|
-| `mode`    | all | — (required) | `"linked_list"`, `"array"`, `"index_list"`, `"tree"`, `"walk"`, `"nested_array"` (N-level array via `levels[]`; naming a level `"core"` yields `${core}`/`${core_index}` tokens; part exprs accept accessor / constant / `${expr}` template / `::global`). Selects the traversal. |
+| `mode`    | all | — (required) | `"linked_list"`, `"array"`, `"index_list"`, `"tree"`, `"walk"`, `"nested_array"` (N-level array via `levels[]`; naming a level `"core"` yields `${core}`/`${core_index}` tokens; part exprs accept accessor / constant / `${expr}` template / `::global`), or `"variant"` (a union: pick one of `cases` by your own `when` condition). Selects the traversal. |
 | `root`    | most | — (required) | Starting expression in your program's own syntax (head pointer, array, buffer, or tree root). May contain `${master}` (grouping). For `walk`, use `start` instead — `root` is only a fallback when `start` is omitted. |
 | `children`| tree | `["left","right"]` | Child-pointer field names followed from each node (BFS). The graph view lays the result out as a hierarchical tree. |
-| `fields`  | all | — (required) | Ordered list of `{ "label", "expr" }` columns. `label` is the header (and first column = row identity); `expr` is the accessor appended after the element, OR a computed expression using `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (render as a usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference — jump to the target row whose `match` column equals this value; `match` defaults to the target's first column), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator make a variant/tagged‑union), `"editable": true` (right‑click → **Edit value…** writes via GDB `set var`; assignable fields only), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value, e.g. `expr:"data"` + `wrap:"((widget_t *)${expr})->x"`), and/or `"badge": { "<value>": "<color>" }` (value→color badge — names like `green`/`red`/`amber`/`cyan` or `#rrggbb` — overriding the built‑in `State` coloring), and/or `"valueMap": { "<value>": "<text>" \| { "text", "color" } }` (render a value as custom **text + color** — the text‑changing superset of `badge`; applies in the table cell and the graph card), `"flags": { "<mask>": "<name>" \| { "text", "color" } }` (decode a bit-flag integer to named flags by mask), and/or `"symbol": true` (treat the value as a **code address** and show its `function+offset` via GDB `print/a` — e.g. a callstack PC → function name; unresolved addresses stay as the address), and/or `"sourceLine": true` (resolve a **code address** to its source `file:line` via GDB `info line` — **click the cell** to open it in the editor; blank if built without `-g`). |
+| `fields`  | all | — (required; for `variant`, inside each case) | Ordered list of `{ "label", "expr" }` columns. `label` is the header (and first column = row identity); `expr` is the accessor appended after the element, OR a computed expression using `${expr}` / `${wrapped_expr}` (the element, like `wrap`/`next`) — e.g. `"${expr}->stack_size - ${expr}->stack_used"` for arithmetic across two members. A field may add `"hidden": true` (start collapsed), `"base": "dec"\|"hex"\|"bin"` (default number base), `"bar": { "max": "<expr>", "warn": 75, "crit": 90 }` (render as a usage bar), and/or `"link": { "section": "<target>", "match": "<column>" }` (clickable cross-reference — jump to the target row whose `match` column equals this value; `match` defaults to the target's first column), and/or `"when": "<bool expr>"` (conditional field — blank when false; several on one discriminator make a variant/tagged‑union), `"editable": true` (right‑click → **Edit value…** writes via GDB `set var`; assignable fields only), `"wrap": "<tmpl>"` (transform the field value *after* access — `${expr}` = the accessed value, e.g. `expr:"data"` + `wrap:"((widget_t *)${expr})->x"`), and/or `"badge": { "<value>": "<color>" }` (value→color badge — names like `green`/`red`/`amber`/`cyan` or `#rrggbb` — overriding the built‑in `State` coloring), and/or `"valueMap": { "<value>": "<text>" \| { "text", "color" } }` (render a value as custom **text + color** — the text‑changing superset of `badge`; applies in the table cell and the graph card), `"flags": { "<mask>": "<name>" \| { "text", "color" } }` (decode a bit-flag integer to named flags by mask), and/or `"symbol": true` (treat the value as a **code address** and show its `function+offset` via GDB `print/a` — e.g. a callstack PC → function name; unresolved addresses stay as the address), and/or `"sourceLine": true` (resolve a **code address** to its source `file:line` via GDB `info line` — **click the cell** to open it in the editor; blank if built without `-g`), and/or `"detail": "<detail section>"` (the cell becomes a trigger: **click it** to open/close that `selectedFrom` detail for this row). |
 | `next`    | linked_list, index_list, walk | — (set it) | linked_list: the pointer field to the next node (used as `cursor->next`). index_list: the field holding the next **index**, OR a `${expr}` template that computes it (like `wrap` — `${expr}` is the element; e.g. `"${expr}.link.idx"` or `"g_succ[${expr}.id]"`). walk: a template that computes the next **cursor** from the current one — `${expr}` is the current raw cursor value (e.g. `"*(unsigned long *)(${expr})"`), or `${wrapped_expr}` when a `cast`/`wrap` is set (e.g. `"${wrapped_expr}->prev"`). The traversal uses this verbatim, so set it; it is only assumed to be `next` when building a grouped master's selector expression. |
 | `head`    | index_list | — | Starting **index** expression, read once. May contain `${master}` (grouping). |
 | `nil`     | index_list | `-1` | Sentinel index that ends the walk. May contain `${master}` (grouping). |
@@ -221,7 +227,8 @@ Every field, across all modes:
 | `wrap`    | all | — | Template that transforms the **element** before field access; `${expr}` = the element. In `walk` it wraps the (cast-typed) cursor to form `${wrapped_expr}`; `${expr}` there stays the **raw cursor value**, so `next`/`while` bounds math is unaffected. |
 | `label`   | master sections | row key | Expression titling each tree node when another section groups by this one. |
 | `groupBy` | grouping sections | — | Name of a master section; renders this section as a tree in its own tab. Use `${master}` in `root`. |
-| `selectedFrom` | detail sections | — | Name of a master section; makes this an **on-demand detail** (not a tab). Right-click a master row/node → **Show … (detail)** to build it for that one element; `${selected}` (in this section's traversal expressions — `root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` — and any field `expr`/`wrap`/`when`/`bar`; *not* `cast`) is the selected element's stable expression. |
+| `selectedFrom` | detail sections | — | Name of a master section; makes this an **on-demand detail** (not a tab). Right-click a master row/node → **Show … (detail)** to build it for that one element; `${selected}` (in this section's traversal expressions — `root`/`start`/`next`/`while`/`head`/`nil`/`count`/`wrap` — and any field `expr`/`wrap`/`when`/`bar`; *not* `cast`; for a `variant`, also in every case's `when` and traversal expressions) is the selected element's stable expression. |
+| `cases`   | variant | — (required) | Ordered list of complete section bodies (`mode`, `root`, `next`/`children`, `fields`, …), each with an optional `"when": "<GDB expr>"`. The **first case whose `when` is true** is used; a case without `when` is the else. You write the condition — the extension knows nothing about the union. A `when` that GDB cannot evaluate counts as false. A case may itself be a `variant` (nested union). Works in plain sections and `selectedFrom` details (not yet with `groupBy`). |
 | `start`   | walk | — | Initial cursor (address/value). `${expr}` in `next`/`while`/fields is the current cursor. |
 | `while`   | walk | — | Boolean `${expr}` template; the walk continues while true and stops when false. |
 | `hidden`  | all | `false` | Start this section's tab hidden (until you show it from the ▤ Sections menu). Ignored once you change section visibility in the UI. |
@@ -412,7 +419,37 @@ accordion **right below the selected row**; in the graph the detail panel opens 
 widens to hold it. It pairs with `walk` for a per-thread call stack — the example
 above, but `"selectedFrom": "threads"` and `"start": "${selected}->cs_fp"`, so
 right-clicking a thread unwinds *its* stack. Independent of the master's mode; a
-master may expose more than one detail.
+master may expose more than one detail. A master field with `"detail": "<name>"`
+also opens it: clicking that cell toggles the detail for its row.
+
+### Union / tagged variant (`variant` + `cases`)
+
+When an object holds a **union** (say a heap tree or a doubly linked list), the
+right traversal depends on which member is live. A `variant` section lists one
+complete section body per member in `cases`, each with a `when` condition **you
+write**; the cases are tried in order, the first true `when` wins, and a case
+without `when` is the else. The chosen case brings its own `mode` and `fields`.
+A `when` GDB cannot evaluate counts as false; if no case matches, the section or
+detail shows an explicit message. Works in plain sections and `selectedFrom`
+details (not yet with `groupBy`). A tree detail is listed depth-first with one
+fixed-width indent mark per level (`├─` / `└─` to the parent, `│` branch continues,
+faint `┊` branch ended), so the marks before a key always equal its depth. The
+demo's `objects` / `objContent` sections show the full pattern:
+
+```json
+"objContent": {
+  "selectedFrom": "objects",
+  "mode": "variant",
+  "cases": [
+    { "when": "${selected}.kind == OBJ_HEAP",
+      "mode": "tree", "root": "${selected}.u.heap.root", "children": ["left", "right"],
+      "fields": [ { "label": "Key", "expr": "key" }, { "label": "Depth", "expr": "${depth}" } ] },
+    { "when": "${selected}.kind == OBJ_DLL",
+      "mode": "linked_list", "root": "${selected}.u.dll.head", "next": "next",
+      "fields": [ { "label": "Key", "expr": "key" }, { "label": "Prev", "expr": "prev", "base": "hex" } ] }
+  ]
+}
+```
 
 ![On-demand detail — a thread's call stack expanded inline below its row](https://raw.githubusercontent.com/nothing-githb/debug-inspector/master/extension/images/detail-callstack.png)
 
@@ -573,6 +610,7 @@ Any `fields` entry can carry these — one example each:
 
 // Tree depth: ${depth} = node depth in a tree section (0 = root, 1 = children, ...). Standalone.
 // (Trees have no ${index}; ${depth} is the tree's positional keyword.)
+// A field whose expr is exactly ${depth} also shows the child side: "1 · left", "2 · right" (root: "0").
 { "label": "Depth", "expr": "${depth}" }
 
 // Master element: in a grouped section (groupBy), ${master} = the master this row belongs to.
